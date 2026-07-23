@@ -1094,6 +1094,173 @@ func DeletePullReviewComment(ctx *context.APIContext) {
 	deleteIssueComment(ctx, issues_model.CommentTypeCode)
 }
 
+// ResolvePullReviewComment resolve a pull review comment conversation
+func ResolvePullReviewComment(ctx *context.APIContext) {
+	// swagger:operation POST /repos/{owner}/{repo}/pulls/{index}/reviews/{id}/comments/{comment}/resolution repository repoResolvePullReviewComment
+	// ---
+	// summary: Resolve a pull review comment conversation
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repo
+	//   type: string
+	//   required: true
+	// - name: index
+	//   in: path
+	//   description: index of the pull request
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: id
+	//   in: path
+	//   description: id of the review
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: comment
+	//   in: path
+	//   description: id of the comment
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/PullReviewComment"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	markPullReviewCommentConversation(ctx, true)
+}
+
+// UnresolvePullReviewComment unresolve a pull review comment conversation
+func UnresolvePullReviewComment(ctx *context.APIContext) {
+	// swagger:operation DELETE /repos/{owner}/{repo}/pulls/{index}/reviews/{id}/comments/{comment}/resolution repository repoUnresolvePullReviewComment
+	// ---
+	// summary: Unresolve a pull review comment conversation
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: owner
+	//   in: path
+	//   description: owner of the repo
+	//   type: string
+	//   required: true
+	// - name: repo
+	//   in: path
+	//   description: name of the repo
+	//   type: string
+	//   required: true
+	// - name: index
+	//   in: path
+	//   description: index of the pull request
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: id
+	//   in: path
+	//   description: id of the review
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// - name: comment
+	//   in: path
+	//   description: id of the comment
+	//   type: integer
+	//   format: int64
+	//   required: true
+	// responses:
+	//   "200":
+	//     "$ref": "#/responses/PullReviewComment"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+
+	markPullReviewCommentConversation(ctx, false)
+}
+
+func markPullReviewCommentConversation(ctx *context.APIContext, isResolve bool) {
+	review, _, statusSet := prepareSingleReview(ctx)
+	if statusSet {
+		return
+	}
+
+	comment := ctx.Comment()
+
+	if comment.Type != issues_model.CommentTypeCode {
+		ctx.NotFound()
+		return
+	}
+
+	if comment.ReviewID != review.ID {
+		ctx.NotFound()
+		return
+	}
+
+	permResult, err := issues_model.CanMarkConversation(ctx, comment.Issue, ctx.Doer())
+	if err != nil {
+		ctx.InternalServerError(err)
+		return
+	}
+	if !permResult {
+		ctx.Error(http.StatusForbidden, "CanMarkConversation", "doer has no permission to mark this conversation")
+		return
+	}
+
+	// MarkConversation early-returns without a DB write when the conversation is
+	// already in the requested state, so capture the prior resolver before the call.
+	wasResolved := comment.ResolveDoerID != 0
+
+	if err := issues_model.MarkConversation(ctx, comment, ctx.Doer(), isResolve); err != nil {
+		ctx.InternalServerError(err)
+		return
+	}
+
+	if isResolve {
+		if wasResolved {
+			// The conversation was resolved by someone else; surface the real resolver
+			// rather than fabricating the current doer.
+			resolveDoer, err := user_model.GetPossibleUserByID(ctx, comment.ResolveDoerID)
+			if err != nil {
+				if !user_model.IsErrUserNotExist(err) {
+					ctx.InternalServerError(err)
+					return
+				}
+				resolveDoer = user_model.NewGhostUser()
+			}
+			comment.ResolveDoer = resolveDoer
+		} else {
+			comment.ResolveDoerID = ctx.Doer().ID
+			comment.ResolveDoer = ctx.Doer()
+		}
+	} else {
+		comment.ResolveDoerID = 0
+		comment.ResolveDoer = nil
+	}
+
+	if err := comment.LoadPoster(ctx); err != nil {
+		ctx.InternalServerError(err)
+		return
+	}
+
+	apiComment, err := convert.ToPullReviewComment(ctx, review, comment, ctx.Doer())
+	if err != nil {
+		ctx.InternalServerError(err)
+		return
+	}
+
+	ctx.JSON(http.StatusOK, apiComment)
+}
+
 func dismissReview(ctx *context.APIContext, msg string, isDismiss, dismissPriors bool) {
 	if !ctx.IsUserRepoAdmin() {
 		ctx.Error(http.StatusForbidden, "", "Must be repo admin")

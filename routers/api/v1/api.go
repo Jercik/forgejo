@@ -1000,6 +1000,9 @@ func Routes() *web.Route {
 										m.Combo("").
 											Get(repo.GetPullReviewComment).
 											Delete(reqToken(), repo.DeletePullReviewComment)
+										m.Combo("/resolution").
+											Post(reqToken(), mustNotBeArchived(), repo.ResolvePullReviewComment).
+											Delete(reqToken(), mustNotBeArchived(), repo.UnresolvePullReviewComment)
 									}, commentAssignment("comment"), reqValidCommentID())
 								})
 								m.Post("/dismissals", reqToken(), bind(api.DismissPullReviewOptions{}), repo.DismissPullReview)
