@@ -94,7 +94,7 @@ type FindReviewOptions struct {
 	db.ListOptions
 	Types        []ReviewType
 	IssueID      int64
-	ReviewerID   int64
+	ReviewerID   int64 // zero disables the reviewer filter; system-user IDs are negative
 	OfficialOnly bool
 	Dismissed    optional.Option[bool]
 }
@@ -104,7 +104,7 @@ func (opts *FindReviewOptions) toCond() builder.Cond {
 	if opts.IssueID > 0 {
 		cond = cond.And(builder.Eq{"issue_id": opts.IssueID})
 	}
-	if opts.ReviewerID > 0 {
+	if opts.ReviewerID != 0 {
 		cond = cond.And(builder.Eq{"reviewer_id": opts.ReviewerID})
 	}
 	if len(opts.Types) > 0 {

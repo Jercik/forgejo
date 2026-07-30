@@ -15,8 +15,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Run conversation-resolution integration test
-        run: make 'test-sqlite#TestAPIPullReviewResolve'
+      - name: Run fork integration tests
+        run: |
+          make 'test-sqlite#TestAPIPullReviewResolve'
+          make 'test-sqlite#TestAPIPullReviewActionsUserPendingIsolation'
+          make 'test-sqlite#TestVersion'
         env:
           TAGS: sqlite sqlite_unlock_notify
         timeout-minutes: 40
