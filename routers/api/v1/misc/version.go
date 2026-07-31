@@ -21,5 +21,10 @@ func Version(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/ServerVersion"
-	ctx.JSON(http.StatusOK, &structs.ServerVersion{Version: setting.AppVer})
+	ctx.JSON(http.StatusOK, &structs.ServerVersion{
+		Version: setting.AppVer,
+		Capabilities: []string{
+			structs.ServerCapabilityActionsReviewerIsolation,
+		},
+	})
 }
