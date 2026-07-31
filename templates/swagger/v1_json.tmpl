@@ -30244,6 +30244,14 @@
       "description": "ServerVersion wraps the version of the server",
       "type": "object",
       "properties": {
+        "capabilities": {
+          "description": "Capabilities advertised by this server build.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "x-go-name": "Capabilities"
+        },
         "version": {
           "type": "string",
           "x-go-name": "Version"

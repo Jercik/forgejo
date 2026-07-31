@@ -47,3 +47,42 @@ func TestDismissReview(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, pull_service.IsErrDismissRequestOnClosedPR(err))
 }
+
+func TestSubmitReviewActionsUserIsolation(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	pull := unittest.AssertExistsAndLoadBean(t, &issues_model.PullRequest{IssueID: 2})
+	require.NoError(t, pull.LoadIssue(db.DefaultContext))
+	require.NoError(t, pull.Issue.LoadRepo(db.DefaultContext))
+	humanReview := unittest.AssertExistsAndLoadBean(t, &issues_model.Review{ID: 4})
+	require.Equal(t, issues_model.ReviewTypePending, humanReview.Type)
+	require.Positive(t, humanReview.ReviewerID)
+
+	actionsUser := user_model.NewActionsUser()
+	actionsReview, err := issues_model.CreateReview(db.DefaultContext, issues_model.CreateReviewOptions{
+		Type:     issues_model.ReviewTypePending,
+		Issue:    pull.Issue,
+		Reviewer: actionsUser,
+		Content:  "Actions pending review",
+	})
+	require.NoError(t, err)
+
+	submittedReview, _, err := pull_service.SubmitReview(
+		db.DefaultContext,
+		actionsUser,
+		nil,
+		pull.Issue,
+		issues_model.ReviewTypeComment,
+		"Actions submitted review",
+		"",
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, actionsReview.ID, submittedReview.ID)
+	assert.Equal(t, int64(user_model.ActionsUserID), submittedReview.ReviewerID)
+	assert.Equal(t, issues_model.ReviewTypeComment, submittedReview.Type)
+
+	humanReview = unittest.AssertExistsAndLoadBean(t, &issues_model.Review{ID: humanReview.ID})
+	assert.Equal(t, issues_model.ReviewTypePending, humanReview.Type)
+	assert.Equal(t, "Pending Review", humanReview.Content)
+}
