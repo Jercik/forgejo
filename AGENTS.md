@@ -1,6 +1,6 @@
 # The j4k Forgejo Fork
 
-This is a personal fork of [Forgejo](https://codeberg.org/forgejo/forgejo). It exists to add features the j4k infrastructure needs that upstream doesn't ship — currently a REST API for resolving pull-request review conversations, which upstream exposes only through the web UI's session-authenticated route. Images built from this fork run the production Forge at `code.j4k.dev`.
+This is a personal fork of [Forgejo](https://codeberg.org/forgejo/forgejo). It exists to add features the j4k infrastructure needs that upstream doesn't ship — currently a REST API for resolving pull-request review conversations and a REST API for rerunning Actions runs and jobs, both of which upstream exposes only through the web UI's session-authenticated routes. Images built from this fork run the production Forge at `code.j4k.dev`.
 
 Unlike the sync-rules-managed repos, this `AGENTS.md` is hand-maintained — edit it directly.
 
@@ -33,6 +33,22 @@ The full decision record — including the rejected alternative of driving upstr
   - `chore(swagger)` — regenerated `templates/swagger/v1_json.tmpl` for the new endpoints.
   - `ci` — `.github/workflows/build-j4k-image.yml`.
   - `docs` — this file and `CLAUDE.md`, carried like any other delta commit.
+  - `feat(api)` + `chore(swagger)` — `POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun`, carried verbatim from upstream PR [#13924](https://codeberg.org/forgejo/forgejo/pulls/13924), with `TestActionsAPIRerunActionRun`. Exit: upstream merges #13924 into the pinned line.
+  - `feat(api)` + `chore(swagger)` — `POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs`, fork-invented, service layer in the fork-owned `services/actions/rerun_failed.go`, with `TestActionsAPIRerunFailedJobs` and the unit test `TestRerunFailedJobs`. Exit: upstream ships a failed-jobs rerun endpoint.
+  - `feat(api)` + `chore(swagger)` — `POST /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun`, fork-invented route over the base's unchanged `RerunJob`, with `TestActionsAPIRerunActionJob`. Exit: upstream ships a job rerun endpoint.
+  - `feat(api)` — the `actions-rerun` server capability advertised by `GET /version`, one flag for the whole trio. Exit: all three rerun endpoints exist in the pinned base.
+
+Accepted coupling inside the delta: the three rerun feat commits append to the same `tests/integration/api_repo_actions_test.go` and CI workflow lines and insert adjacent route and handler blocks in `routers/api/v1/api.go` and `routers/api/v1/repo/action.go`, so dropping one before the others needs a trivial mechanical conflict resolution across those four files; the capability commit edits the capabilities slice and version test owned by the reviewer-isolation carry, so whichever of those two drops first resolves a one-line conflict. A rebase now stops on `templates/swagger/v1_json.tmpl` three times — resolve every one by re-running `make generate-swagger` on the new base, never by hand-merging the generated JSON.
+
+### Inherited upstream defects in the rerun paths
+
+Observed during the rerun carry and left unpatched: `services/actions/rerun.go` and `routers/web/**` are upstream-owned, the web UI shares those code paths, and patching them would bloat the delta and break verbatim droppability. Don't re-diagnose them:
+
+- `RerunAllJobs` and `RerunJob` reset the run row before the job loop, so a mid-loop aggregate recompute can fire one spurious `ActionRunNowDone` (`action_run_failure` webhook plus mail) and re-stamp a stale non-zero `Stopped` on the reset run row.
+- A run with zero jobs reruns to `204` and stays permanently `Waiting` (`RerunAllJobs` returns an empty slice with no error; the web handler 500s on the same state).
+- `GetAllRerunJobs` expands dependents in a single forward pass over id order, so a transitive dependent declared before its dependency is silently not rerun.
+
+The fork-owned `RerunFailedJobs` has none of these: its two-phase cancel-then-flip transaction emits no notification and leaves `Started`/`Stopped` zeroed, and its expansion is a row-keyed fixpoint.
 
 ## Release pipeline
 
@@ -42,14 +58,14 @@ The consumer is the cluster repo (`~/Developer/j4k/cluster`): `roles/forgejo/def
 
 Cutting a release:
 
-1. `git fetch upstream --tags`. For a patch bump within the line, rebase the carried delta onto the new tag and reuse the branch — `git rebase --onto v16.0.2 v16.0.1 v16.0/j4k`, then `git push --force-with-lease origin v16.0/j4k` (a plain push is rejected as non-fast-forward after a rebase). A new minor line gets a fresh `vX.Y/j4k` branch instead. If the rebase conflicts on `templates/swagger/v1_json.tmpl`, don't hand-merge the generated JSON — resolve by re-running `make generate-swagger` on the new base (the BSD-sed gotcha below applies).
-2. Run the integration tests: `TAGS="sqlite sqlite_unlock_notify" make 'test-sqlite#TestAPIPullReviewResolve'`.
+1. `git fetch upstream --tags`. For a patch bump within the line, rebase the carried delta onto the new tag and reuse the branch — `git rebase --onto v16.0.2 v16.0.1 v16.0/j4k`, then `git push --force-with-lease origin v16.0/j4k` (a plain push is rejected as non-fast-forward after a rebase). A new minor line gets a fresh `vX.Y/j4k` branch instead. The rebase conflicts on `templates/swagger/v1_json.tmpl` three times (one per swagger commit); don't hand-merge the generated JSON — resolve each by re-running `make generate-swagger` on the new base (the BSD-sed gotcha below applies).
+2. Run the carried tests — six integration targets under `TAGS="sqlite sqlite_unlock_notify"` (`make 'test-sqlite#X'` for `TestAPIPullReviewResolve`, `TestAPIPullReviewActionsUserPendingIsolation`, `TestVersion`, `TestActionsAPIRerunActionRun`, `TestActionsAPIRerunFailedJobs`, `TestActionsAPIRerunActionJob`) plus the unit target `make 'test#TestRerunFailedJobs'`.
 3. Create the signed tag `vX.Y.Z-j4k.N`; push the branch first, then the tag in a **separate** push. When branch and tag were pushed together, GitHub delivered only the branch push event and the tag-triggered workflow never fired (observed on this repo; GitHub documents push-event suppression only for >3 tags, so don't count on a combined push).
 4. Take the digest from the workflow's step summary, then update the cluster pin following the role README's Upgrading procedure — re-diff the carried delta's `models/migrations` + `models/forgejo_migrations` for changes (that diff decides whether pin-revert remains a valid rollback), deploy backup-gated — and append the pin-history entry, including the exit condition for any newly carried patch.
 
 ## Adding a feature
 
-Every new carried feature is its own `feat` commit with an integration test; if it touches the API, regenerate swagger in a separate `chore(swagger)` commit. Extend the CI test job in `.github/workflows/build-j4k-image.yml` to run the new test — the job only runs what it names, currently `test-sqlite#TestAPIPullReviewResolve`. Then cut a release with `N` incremented.
+Every new carried feature is its own `feat` commit with an integration test; if it touches the API, regenerate swagger in a separate `chore(swagger)` commit. Extend the CI test job in `.github/workflows/build-j4k-image.yml` to run the new test — the job only runs what it names, currently the six `test-sqlite#…` integration targets and `test#TestRerunFailedJobs`. Then cut a release with `N` incremented.
 
 ## Gotchas
 
