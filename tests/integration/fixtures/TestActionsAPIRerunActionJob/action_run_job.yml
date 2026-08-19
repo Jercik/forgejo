@@ -1,0 +1,26 @@
+# Jobs of the failed run: the failed job a and its successful dependent b.
+- id: 48041
+  run_id: 35041
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: a
+  status: 2 # StatusFailure
+
+- id: 48042
+  run_id: 35041
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: b
+  needs: [a]
+  status: 1 # StatusSuccess
+
+# Job of the still running run.
+- id: 48043
+  run_id: 35042
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: a
+  status: 6 # StatusRunning

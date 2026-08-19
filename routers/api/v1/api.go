@@ -889,6 +889,7 @@ func Routes() *web.Route {
 						m.Get("/{artifact_id}/zip", repo.DownloadActionArtifact)
 					})
 					m.Get("/jobs/{job_id}/logs", repo.GetActionJobLogs)
+					m.Post("/jobs/{job_id}/rerun", reqToken(), reqRepoWriter(unit.TypeActions), repo.RerunActionJob)
 					m.Group("/runs", func() {
 						m.Get("", repo.ListActionRuns)
 						m.Get("/{run_id}", repo.GetActionRun)
