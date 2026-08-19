@@ -5877,6 +5877,57 @@
         }
       }
     },
+    "/repos/{owner}/{repo}/actions/jobs/{job_id}/rerun": {
+      "post": {
+        "description": "Rerun a particular job of a workflow run. The job must have completed (succeeded, failed, cancelled or skipped) for the operation to succeed, but the workflow run itself does not have to be finished. The jobs that depend on this job are rerun as well; the ones among them that are still running are cancelled first. All artifacts of the workflow run are removed, because artifacts are bound to a run and not to a job.\n",
+        "produces": [
+          "application/json"
+        ],
+        "tags": [
+          "repository"
+        ],
+        "summary": "Rerun a finished job of a workflow run and its dependents.",
+        "operationId": "RerunActionJob",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "owner of the repo",
+            "name": "owner",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "name of the repo",
+            "name": "repo",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "ID of the job",
+            "name": "job_id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Rerun of the job and its dependents has been started"
+          },
+          "400": {
+            "$ref": "#/responses/error"
+          },
+          "403": {
+            "$ref": "#/responses/forbidden"
+          },
+          "404": {
+            "$ref": "#/responses/notFound"
+          }
+        }
+      }
+    },
     "/repos/{owner}/{repo}/actions/runners": {
       "get": {
         "produces": [
