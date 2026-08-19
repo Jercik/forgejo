@@ -21,6 +21,8 @@ jobs:
           make 'test-sqlite#TestAPIPullReviewActionsUserPendingIsolation'
           make 'test-sqlite#TestVersion'
           make 'test-sqlite#TestActionsAPIRerunActionRun'
+          make 'test-sqlite#TestActionsAPIRerunFailedJobs'
+          make 'test#TestRerunFailedJobs'
         env:
           TAGS: sqlite sqlite_unlock_notify
         timeout-minutes: 40
