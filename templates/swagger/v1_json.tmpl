@@ -6625,6 +6625,57 @@
         }
       }
     },
+    "/repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs": {
+      "post": {
+        "description": "Rerun the failed jobs of a particular workflow run. A job counts as failed when it concluded as failure or as cancelled. The jobs that depend on those jobs are rerun as well, including all expansions of a dependent matrix job. The workflow run must have completed (succeeded, failed, cancelled or skipped) for the operation to succeed, and it must have at least one failed job. Otherwise, an error is returned.\n",
+        "produces": [
+          "application/json"
+        ],
+        "tags": [
+          "repository"
+        ],
+        "summary": "Rerun the failed jobs of a finished workflow run and their dependents.",
+        "operationId": "RerunActionRunFailedJobs",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "owner of the repo",
+            "name": "owner",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "name of the repo",
+            "name": "repo",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "ID of the workflow run",
+            "name": "run_id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Rerun of the failed jobs has been started"
+          },
+          "400": {
+            "$ref": "#/responses/error"
+          },
+          "403": {
+            "$ref": "#/responses/forbidden"
+          },
+          "404": {
+            "$ref": "#/responses/notFound"
+          }
+        }
+      }
+    },
     "/repos/{owner}/{repo}/actions/secrets": {
       "get": {
         "produces": [
