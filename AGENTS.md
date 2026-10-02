@@ -48,15 +48,27 @@ Use `-slim` Debian variants (e.g. `node:26-bookworm-slim`, `python:3.12-slim-boo
 
 # Rule: Set the Container UID in the Orchestrator, Not the Image
 
-Do not create users inside container images. Let the orchestrator (Podman Quadlet, Kubernetes, docker-compose) specify the non-root UID and GID the container runs as. A hardcoded `USER` couples the image to one UID: clusters enforcing Pod Security Standards or OPA Gatekeeper can require arbitrary UIDs, and an orchestrator-assigned UID that differs from the image's causes volume-ownership conflicts Podman papers over with the non-portable `:U` volume flag.
+Do not create users inside container images. Let the orchestrator (Podman Quadlet, Kubernetes, docker-compose) specify the non-root UID and GID the container runs as. A `USER` naming an image-local account couples the image to one UID: clusters enforcing Pod Security Standards or OPA Gatekeeper can require arbitrary UIDs, and an orchestrator-assigned UID that differs from the image's causes volume-ownership conflicts Podman papers over with the non-portable `:U` volume flag.
 
 ```dockerfile
-# BAD
+# BAD: the account exists only in this image, and USER pins the container to it
 RUN groupadd -r myapp && useradd -r -g myapp myapp
 USER myapp
 ```
 
-Write the runtime stage without a `USER` instruction.
+Minting a new account is the prohibited act, not naming one. Where an orchestrator assigns the UID, write the runtime stage without a `USER` instruction — it would be overridden anyway.
+
+## Never let the fallback be root
+
+An image deployed by a bare `podman run` or `docker run` has no orchestrator to assign anything, so dropping `USER` starts it as root. There, keep a `USER` naming an unprivileged account the base image already ships — `node`, `nginx`, `postgres` — and give it any path the process writes at build time:
+
+```dockerfile
+# GOOD: no account is created; node ships with the base image
+RUN mkdir -p /result && chown node:node /result
+USER node
+```
+
+Drop that line when the deployment gains a Quadlet unit or a pod spec, and set the UID there instead. Until then it is the only thing standing between the workload and root.
 
 ## Orchestrator configuration
 
@@ -252,6 +264,18 @@ it("applies the bulk discount at qty 10", () => {
 ```
 
 A good test survives a behavior-preserving refactor; one that must change with it is pinned to the wrong thing.
+
+# Rule: Follow Upstream Conventions in Upstream Code
+
+This repository is a fork: its `upstream` git remote names the project it tracks. Code in upstream's tree — files that exist upstream and new files you add to its packages — follows upstream's code conventions over this file's coding rules: file names, comments, error handling, module and type structure, test shape, changelog entries. That keeps fork changes rebasing cleanly onto upstream and ready to propose there. Rules about how you work, such as startup reads, verification, and tool usage, still apply everywhere. Files only the fork needs — its own tooling, CI, and fork documentation such as `UPSTREAMING.md` — follow this file's coding rules.
+
+# Rule: No Changelogs in Your Own Code
+
+Create no changelog or release-notes files (`CHANGELOG.md`, `RELEASE_NOTES.md`, `.changeset/`, `changelog.d/`) and write no changelog entries: the commit message and pull request description carry the history of a change.
+
+When you find an existing one in the repository's own code, move any standing facts it still carries into the package's current documentation in present tense, then delete it. Standing facts are things like upgrade order or rollback limits for versions still in use.
+
+Forks of upstream projects and vendored third-party code keep upstream's convention.
 
 # Rule: Use `repoq` for Repository Queries
 
