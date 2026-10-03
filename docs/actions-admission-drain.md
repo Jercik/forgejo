@@ -19,6 +19,16 @@ protected stop, backup, restart and health check. Forgejo cannot establish that
 host ownership survives a reboot; the cluster must retain its maintenance
 marker and refuse ordinary startup after an interrupted operation.
 
+Before starting a target image, run its raw binary with `capabilities`. This
+standalone command prints `{"schema":1,"capabilities":["actions-admission-drain"]}`
+without loading configuration, connecting to a database or starting a server.
+It reports compiled support; it does not prove the feature is configured. Reject
+unsupported commands, nonzero exits and output that does not match this schema.
+For the rootless image, use `/app/gitea/gitea` as the container entrypoint, with
+no network or host mounts, a read-only root, image volumes ignored and a finite
+runtime bound. Verify the exact pinned target before creating maintenance
+ownership or stopping the current server.
+
 The `actions-admission-drain` version capability means the configured contract
 below is available. The existing authenticated admin endpoint
 `GET /api/v1/admin/actions/runners/{id}` adds `admission`:

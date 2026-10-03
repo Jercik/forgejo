@@ -188,6 +188,7 @@ func innerNewMainApp(version, versionExtra string, subCmdsStandaloneArgs, subCmd
 	subCmdStandalone := []*cli.Command{
 		cmdCert(),
 		cmdGenerate(),
+		cmdCapabilities(),
 	}
 	subCmdStandalone = append(subCmdStandalone, subCmdsStandaloneArgs...)
 
