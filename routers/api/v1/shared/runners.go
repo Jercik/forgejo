@@ -148,7 +148,7 @@ func GetRunner(ctx *context.APIContext, ownerID, repoID, runnerID int64) {
 	}
 	if ownerID == 0 && repoID == 0 {
 		admission, err := actions_module.AdmissionSnapshot(runner.ID)
-		if err != nil {
+		if err != nil && !errors.Is(err, actions_module.ErrAdmissionNotConfigured) {
 			ctx.InternalServerError(err)
 			return
 		}

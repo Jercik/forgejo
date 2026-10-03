@@ -16,7 +16,7 @@ func admissionLockSupported() error { return nil }
 
 func admissionFileIdentity(info os.FileInfo) (uint64, uint64) {
 	stat := info.Sys().(*syscall.Stat_t)
-	return uint64(stat.Dev), uint64(stat.Ino)
+	return uint64(stat.Dev), stat.Ino
 }
 
 func lockAdmissionShared(file *os.File) error {

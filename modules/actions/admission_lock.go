@@ -13,6 +13,8 @@ import (
 
 var ErrAdmissionPaused = errors.New("actions task admission is paused")
 
+var ErrAdmissionNotConfigured = errors.New("actions admission lock is not configured")
+
 var admissionLock atomic.Pointer[AdmissionLock]
 
 type AdmissionLock struct {

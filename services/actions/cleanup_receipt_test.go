@@ -85,7 +85,7 @@ func TestCleanupReceiptSkipsFullEnrolledBatchAndProgresses(t *testing.T) {
 	_, err := db.GetEngine(t.Context()).Where("id > 0").Cols("stopped").Update(&actions_model.ActionTask{Stopped: timeutil.TimeStampNow()})
 	require.NoError(t, err)
 	var tasks []*actions_model.ActionTask
-	for i := int64(0); i < deleteLogBatchSize; i++ {
+	for i := range int64(deleteLogBatchSize) {
 		tasks = append(tasks, receiptCleanupTask(t, 990100+i, false))
 	}
 	next := receiptCleanupTask(t, 990200, false)

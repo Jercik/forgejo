@@ -12,7 +12,7 @@ import (
 	actions_model "forgejo.org/models/actions"
 	"forgejo.org/models/db"
 	"forgejo.org/modules/setting"
-	repository_service "forgejo.org/services/repository"
+	repo_service "forgejo.org/services/repository"
 	"forgejo.org/tests"
 
 	"github.com/stretchr/testify/require"
@@ -83,7 +83,7 @@ func TestAdmissionPostgresEnrollmentSerializesRepositoryDeletion(t *testing.T) {
 	defer tx.Close()
 	require.NoError(t, actions_model.EnrollTaskReceipt(ctx, task))
 	pid, result := admissionPostgresDelete(t, func(ctx context.Context) error {
-		return repository_service.DeleteRepositoryDirectly(ctx, 1, repository_service.DeleteRepositoryOpts{})
+		return repo_service.DeleteRepositoryDirectly(ctx, 1, repo_service.DeleteRepositoryOpts{})
 	})
 	admissionPostgresBlocked(t, <-pid)
 	require.NoError(t, tx.Commit())
@@ -129,7 +129,7 @@ func TestAdmissionPostgresAssignmentSerializesRepositoryDeletion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sql.NullBool{Valid: true, Bool: false}, task.RunnerFinalReportReceived)
 	pid, result := admissionPostgresDelete(t, func(ctx context.Context) error {
-		return repository_service.DeleteRepositoryDirectly(ctx, 1, repository_service.DeleteRepositoryOpts{})
+		return repo_service.DeleteRepositoryDirectly(ctx, 1, repo_service.DeleteRepositoryOpts{})
 	})
 	admissionPostgresBlocked(t, <-pid)
 	require.NoError(t, tx.Commit())

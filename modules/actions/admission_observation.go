@@ -31,7 +31,7 @@ func StartAdmissionFetch() uint64 { return admissionFetchSequence.Add(1) }
 func AdmissionSnapshot(runnerID int64) (*structs.ActionRunnerAdmission, error) {
 	lock := admissionLock.Load()
 	if lock == nil {
-		return nil, nil
+		return nil, ErrAdmissionNotConfigured
 	}
 	file, err := lock.open()
 	if err != nil {
@@ -64,7 +64,7 @@ func AdmissionSnapshot(runnerID int64) (*structs.ActionRunnerAdmission, error) {
 // CompleteAdmissionFetch runs only after successful assembly of the complete bulk response.
 func CompleteAdmissionFetch(runnerID int64, sequence uint64, capacity *int64, total uint64) {
 	snapshot, err := AdmissionSnapshot(runnerID)
-	if err != nil || snapshot == nil {
+	if err != nil {
 		return
 	}
 	var requested *int64

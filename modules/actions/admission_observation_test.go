@@ -45,3 +45,11 @@ func TestAdmissionObservationCapacityAndOrder(t *testing.T) {
 	_, err = AdmissionSnapshot(123456)
 	require.ErrorContains(t, err, "inode changed")
 }
+
+func TestAdmissionObservationUnconfigured(t *testing.T) {
+	require.NoError(t, InitAdmissionLock(""))
+	CompleteAdmissionFetch(123456, StartAdmissionFetch(), nil, 0)
+	snapshot, err := AdmissionSnapshot(123456)
+	require.ErrorIs(t, err, ErrAdmissionNotConfigured)
+	require.Nil(t, snapshot)
+}

@@ -87,5 +87,12 @@ jobs:
 		_, err = runner.client.runnerServiceClient.FetchTask(t.Context(), connect.NewRequest(&runnerv1.FetchTaskRequest{}))
 		require.NoError(t, err)
 		require.Nil(t, snapshot().LastFetch.TaskCapacity)
+		// Unconfigured servers retain the existing admin response without proof metadata.
+		require.NoError(t, actions_module.InitAdmissionLock(""))
+		request := NewRequest(t, http.MethodGet, fmt.Sprintf("/api/v1/admin/actions/runners/%d", modelRunner.ID)).AddTokenAuth(token)
+		response := MakeRequest(t, request, http.StatusOK)
+		var exposed structs.ActionRunner
+		DecodeJSON(t, response, &exposed)
+		require.Nil(t, exposed.Admission)
 	})
 }
