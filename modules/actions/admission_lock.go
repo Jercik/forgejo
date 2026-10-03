@@ -6,6 +6,7 @@ package actions
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -52,6 +53,10 @@ func NewAdmissionLock(path string) (*AdmissionLock, error) {
 	lock := &AdmissionLock{path: path, identity: info}
 	file, err := lock.open()
 	if err != nil {
+		return nil, err
+	}
+	if _, err := admissionStatePaused(file); err != nil {
+		_ = file.Close()
 		return nil, err
 	}
 	if err := file.Close(); err != nil {
@@ -103,5 +108,29 @@ func (l *AdmissionLock) Acquire() (func() error, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("actions admission lock inode changed during acquisition: %q: %v", l.path, err)
 	}
+	paused, err := admissionStatePaused(file)
+	if err != nil || paused {
+		_ = file.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrAdmissionPaused
+	}
 	return file.Close, nil
+}
+
+// Read only the bound descriptor. A bounded exact read rejects partial and oversized state.
+func admissionStatePaused(file *os.File) (bool, error) {
+	state, err := io.ReadAll(io.LimitReader(file, 8))
+	if err != nil {
+		return false, fmt.Errorf("actions admission lock state: %w", err)
+	}
+	switch string(state) {
+	case "open\n":
+		return false, nil
+	case "paused\n":
+		return true, nil
+	default:
+		return false, errors.New("actions admission lock state must be exactly open\\n or paused\\n")
+	}
 }

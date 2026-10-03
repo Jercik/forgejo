@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 func newAdmissionTestFile(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "admission.lock")
-	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("open\n"), 0o600))
 	return path
 }
 
@@ -51,7 +52,7 @@ func TestAdmissionLockRejectsReplacement(t *testing.T) {
 	lock, err := NewAdmissionLock(path)
 	require.NoError(t, err)
 	require.NoError(t, os.Rename(path, path+".held"))
-	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("open\n"), 0o600))
 	_, err = lock.Acquire()
 	require.ErrorContains(t, err, "inode changed")
 }
@@ -94,4 +95,52 @@ func TestAdmissionLockProcessProbe(t *testing.T) {
 	require.NoError(t, err)
 	_, err = lock.Acquire()
 	require.ErrorIs(t, err, ErrAdmissionPaused)
+}
+
+func TestAdmissionStateSurvivesOwnerExit(t *testing.T) {
+	path := newAdmissionTestFile(t)
+	require.NoError(t, InitAdmissionLock(path))
+	t.Cleanup(func() { require.NoError(t, InitAdmissionLock("")) })
+	owner, err := os.OpenFile(path, os.O_RDWR, 0)
+	require.NoError(t, err)
+	require.NoError(t, syscall.Flock(int(owner.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	_, err = owner.WriteAt([]byte("paused\n"), 0)
+	require.NoError(t, err)
+	require.NoError(t, owner.Truncate(7))
+	require.NoError(t, owner.Sync())
+	// Configured startup accepts a valid paused state while the owner still holds EX.
+	require.NoError(t, InitAdmissionLock(path))
+	require.NoError(t, owner.Close())
+	_, err = AcquireAdmission()
+	require.ErrorIs(t, err, ErrAdmissionPaused)
+	state, err := AdmissionSnapshot(111)
+	require.NoError(t, err)
+	require.True(t, state.Fenced)
+	require.NoError(t, InitAdmissionLock(path))
+	owner, err = os.OpenFile(path, os.O_RDWR, 0)
+	require.NoError(t, err)
+	require.NoError(t, syscall.Flock(int(owner.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+	_, err = owner.WriteAt([]byte("open\n"), 0)
+	require.NoError(t, err)
+	require.NoError(t, owner.Truncate(5))
+	require.NoError(t, owner.Sync())
+	require.NoError(t, owner.Close())
+	release, err := AcquireAdmission()
+	require.NoError(t, err)
+	require.NoError(t, release())
+}
+
+func TestAdmissionStateRejectsInterruptedWrites(t *testing.T) {
+	path := newAdmissionTestFile(t)
+	require.NoError(t, InitAdmissionLock(path))
+	t.Cleanup(func() { require.NoError(t, InitAdmissionLock("")) })
+	for _, state := range []string{"", "o", "open", "paused", "open\nextra", "paused\nextra", "unknown\n", strings.Repeat("x", 4096)} {
+		require.NoError(t, os.WriteFile(path, []byte(state), 0o600))
+		_, err := AcquireAdmission()
+		require.ErrorContains(t, err, "state must be exactly")
+		_, err = AdmissionSnapshot(111)
+		require.ErrorContains(t, err, "state must be exactly")
+		_, err = NewAdmissionLock(path)
+		require.ErrorContains(t, err, "state must be exactly")
+	}
 }

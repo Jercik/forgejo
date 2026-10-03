@@ -7,20 +7,32 @@ or migration cannot establish that older tasks reported successfully.
 Set `[actions] ADMISSION_LOCK_PATH` to an absolute readable regular file. Keep
 the file and its parent directory protected from replacement by untrusted
 users. Mount the file into Forgejo, rather than mounting a directory where the
-file can be replaced. Configured startup rejects a missing or unsafe file.
+file can be replaced. Its exact contents must be `open\n` or `paused\n`.
+Configured startup rejects a missing, unsafe or malformed file and accepts a
+valid paused file even while the exclusive owner holds it.
 Assignment errors on changed paths deny new work. Unsupported operating systems
 reject the configured feature; leaving it unset disables the admission API.
 
 Each assignment holds an independent shared `flock` through its transaction and
 task construction. A host exclusive owner waits for existing shared holders,
-then blocks new assignments. Existing request-key recovery and final reporting
-remain available. Keep the same exclusive owner and file inode through every
-protected stop, backup, restart and health check. Forgejo cannot establish that
-host ownership survives a reboot; the cluster must retain its maintenance
-marker and refuse ordinary startup after an interrupted operation.
+then writes, truncates and fsyncs `paused\n` before announcing readiness. Every
+assignment reads the state under its shared lock and proceeds only for exact
+`open\n`. Empty, partial, trailing and unknown bytes deny admission. Paused state
+continues to deny assignments after the owner process dies. Existing request-key
+recovery and final reporting remain available. The admission snapshot reports
+fenced for either paused state or exclusive contention; malformed state fails
+the snapshot.
+
+Keep the same file inode through every protected stop, backup, restart and health
+check. After the maintenance proofs succeed, the host stops the exact owner while
+state stays paused, reacquires EX on that inode, revalidates its generation, then
+writes and fsyncs `open\n` before removing the private marker and unlocking.
+Unexpected owner exit never opens admission. Forgejo cannot establish host
+ownership across a reboot or perform owner recovery; the cluster must retain its
+maintenance marker and require explicit checked recovery.
 
 Before starting a target image, run its raw binary with `capabilities`. This
-standalone command prints `{"schema":1,"capabilities":["actions-admission-drain"]}`
+standalone command prints `{"schema":1,"capabilities":["actions-admission-drain-state-v1"]}`
 without loading configuration, connecting to a database or starting a server.
 It reports compiled support; it does not prove the feature is configured. Reject
 unsupported commands, nonzero exits and output that does not match this schema.
@@ -29,7 +41,7 @@ no network or host mounts, a read-only root, image volumes ignored and a finite
 runtime bound. Verify the exact pinned target before creating maintenance
 ownership or stopping the current server.
 
-The `actions-admission-drain` version capability means the configured contract
+The `actions-admission-drain-state-v1` version capability means the configured contract
 below is available. The existing authenticated admin endpoint
 `GET /api/v1/admin/actions/runners/{id}` adds `admission`:
 

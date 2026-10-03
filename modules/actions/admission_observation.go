@@ -48,6 +48,11 @@ func AdmissionSnapshot(runnerID int64) (*structs.ActionRunnerAdmission, error) {
 	if err != nil && !fenced {
 		return nil, err
 	}
+	paused, err := admissionStatePaused(file)
+	if err != nil {
+		return nil, err
+	}
+	fenced = fenced || paused
 	current, err := os.Lstat(lock.path)
 	if err != nil || !os.SameFile(lock.identity, current) {
 		return nil, fmt.Errorf("actions admission lock inode changed during probe: %q: %v", lock.path, err)

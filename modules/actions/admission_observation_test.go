@@ -41,7 +41,7 @@ func TestAdmissionObservationCapacityAndOrder(t *testing.T) {
 	require.Nil(t, last.LastFetch.TaskCapacity)
 	// Changing the inode invalidates API proof rather than returning a stale observation.
 	require.NoError(t, os.Rename(path, path+".old"))
-	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("open\n"), 0o600))
 	_, err = AdmissionSnapshot(123456)
 	require.ErrorContains(t, err, "inode changed")
 }

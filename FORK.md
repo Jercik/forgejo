@@ -21,9 +21,10 @@ The fork carries these changes:
   `v16.0.5` still uses `v1.8.2`. Drop this dependency carry when the pinned
   upstream release includes the fix and passes the regression test.
 - Actions maintenance uses an optional `[actions] ADMISSION_LOCK_PATH` and
-  advertises `actions-admission-drain` when configured. Shared file locks cover
-  task assignment; a host exclusive lock pauses new assignments while recovery
-  and reporting remain available. Admin runner GET responses expose fresh fetch
+  advertises `actions-admission-drain-state-v1` when configured. Shared file locks cover
+  task assignment; exact paused state in the bound file keeps assignments denied
+  after the exclusive owner dies while recovery and reporting remain available.
+  Admin runner GET responses expose fresh fetch
   observations and global task receipt counts. See
   [the maintenance contract](docs/actions-admission-drain.md).
 

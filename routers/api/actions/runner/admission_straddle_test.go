@@ -39,7 +39,7 @@ func TestAdmissionBulkFetchStraddle(t *testing.T) {
 	defer unittest.OverrideFixtures("models/actions/TestActionTask_GetAvailableJobsForRunner")()
 	require.NoError(t, unittest.PrepareTestDatabase())
 	path := filepath.Join(t.TempDir(), "admission.lock")
-	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("open\n"), 0o600))
 	require.NoError(t, actions_module.InitAdmissionLock(path))
 	t.Cleanup(func() { require.NoError(t, actions_module.InitAdmissionLock("")) })
 	lease, err := os.Open(path)

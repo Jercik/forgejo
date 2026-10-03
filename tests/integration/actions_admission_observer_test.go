@@ -29,7 +29,7 @@ import (
 func TestActionAdmissionFetchObservation(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, _ *url.URL) {
 		path := filepath.Join(t.TempDir(), "admission.lock")
-		require.NoError(t, os.WriteFile(path, nil, 0o600))
+		require.NoError(t, os.WriteFile(path, []byte("open\n"), 0o600))
 		require.NoError(t, actions_module.InitAdmissionLock(path))
 		t.Cleanup(func() { require.NoError(t, actions_module.InitAdmissionLock("")) })
 		user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
