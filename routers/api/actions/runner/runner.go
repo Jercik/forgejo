@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	actions_model "forgejo.org/models/actions"
 	repo_model "forgejo.org/models/repo"
@@ -140,7 +141,25 @@ func (s *Service) FetchTask(
 	ctx context.Context,
 	req *connect.Request[runnerv1.FetchTaskRequest],
 ) (*connect.Response[runnerv1.FetchTaskResponse], error) {
+	return s.fetchTask(ctx, req, actions_service.PickTask)
+}
+
+func (s *Service) fetchTask(
+	ctx context.Context,
+	req *connect.Request[runnerv1.FetchTaskRequest],
+	pickTask func(context.Context, *actions_model.ActionRunner, *string, *string) (*runnerv1.Task, error),
+) (response *connect.Response[runnerv1.FetchTaskResponse], responseErr error) {
 	runner := GetRunner(ctx)
+	sequence := actions.StartAdmissionFetch()
+	defer func() {
+		if responseErr == nil && response != nil {
+			total := uint64(len(response.Msg.AdditionalTasks))
+			if response.Msg.Task != nil {
+				total++
+			}
+			actions.CompleteAdmissionFetch(runner.ID, sequence, req.Msg.TaskCapacity, total)
+		}
+	}()
 
 	requestKey := getRequestKey(ctx)
 	if requestKey != nil {
@@ -185,7 +204,7 @@ func (s *Service) FetchTask(
 		// if the task version in request is not equal to the version in db,
 		// it means there may still be some tasks not be assigned.
 		// try to pick a task for the runner that send the request.
-		if t, err := actions_service.PickTask(ctx, runner, requestKey, nil); err != nil {
+		if t, err := pickTask(ctx, runner, requestKey, nil); err != nil {
 			if !(actions_service.IsNoTaskAvailable(err)) {
 				log.Error("pick task failed: %v", err)
 				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("pick task: %w", err))
@@ -196,7 +215,7 @@ func (s *Service) FetchTask(
 			taskCapacity := req.Msg.GetTaskCapacity()
 			taskCapacity-- // remove 1 for the task already fetched as `task`
 			for taskCapacity > 0 {
-				t, err := actions_service.PickTask(ctx, runner, requestKey, nil)
+				t, err := pickTask(ctx, runner, requestKey, nil)
 				if err != nil {
 					if !(actions_service.IsNoTaskAvailable(err)) {
 						// Don't return an error to the client/runner -- we've already assigned one-or-more tasks to the runner
@@ -283,6 +302,7 @@ func (*Service) UpdateTask(
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("update task: %w", err))
 	}
 
+	outputInsertFailed := false
 	for k, v := range req.Msg.Outputs {
 		if len(k) > 255 {
 			log.Warn("Ignore the output of task %d because the key is too long: %q", task.ID, k)
@@ -298,11 +318,16 @@ func (*Service) UpdateTask(
 		// See https://docs.github.com/en/actions/using-jobs/defining-outputs-for-jobs
 
 		if err := actions_model.InsertTaskOutputIfNotExist(ctx, task.ID, k, v); err != nil {
+			outputInsertFailed = true
 			log.Warn("Failed to insert the output %q of task %d: %v", k, task.ID, err)
 			// It's ok not to return errors, the runner will resend the outputs.
 		}
 	}
 	sentOutputs, err := actions_model.FindTaskOutputKeyByTaskID(ctx, task.ID)
+	outputsAccepted := err == nil && !outputInsertFailed
+	for key := range req.Msg.Outputs {
+		outputsAccepted = outputsAccepted && slices.Contains(sentOutputs, key)
+	}
 	if err != nil {
 		log.Warn("Failed to find the sent outputs of task %d: %v", task.ID, err)
 		// It's not to return errors, it can be handled when the runner resends sent outputs.
@@ -343,6 +368,11 @@ func (*Service) UpdateTask(
 		}
 	}
 
+	if req.Msg.State.Result != runnerv1.Result_RESULT_UNSPECIFIED && outputsAccepted {
+		if err := actions_model.AcceptTaskFinalReport(ctx, task.ID, runner.ID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("record final report: %w", err))
+		}
+	}
 	return connect.NewResponse(&runnerv1.UpdateTaskResponse{
 		State: &runnerv1.TaskState{
 			Id:     req.Msg.State.Id,

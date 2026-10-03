@@ -4,6 +4,7 @@
 package actions
 
 import (
+	actions_module "forgejo.org/modules/actions"
 	"forgejo.org/modules/graceful"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/queue"
@@ -12,6 +13,10 @@ import (
 )
 
 func Init() {
+	if err := actions_module.InitAdmissionLock(setting.Actions.AdmissionLockPath); err != nil {
+		log.Fatal("Unable to initialize actions admission lock: %v", err)
+	}
+
 	if !setting.Actions.Enabled {
 		return
 	}

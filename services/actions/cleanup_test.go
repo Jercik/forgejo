@@ -21,7 +21,7 @@ func TestCleanup(t *testing.T) {
 	t.Run("Deletes no longer existing logs", func(t *testing.T) {
 		require.NoError(t, unittest.PrepareTestDatabase())
 
-		unittest.AssertSuccessfulInsert(t, &actions_model.ActionTask{ID: 1001, LogExpired: false, LogIndexes: []int64{1, 2, 3, 4}, LogFilename: "does-not-exist", Stopped: timeutil.TimeStamp(1)})
+		unittest.AssertSuccessfulInsert(t, &actions_model.ActionTask{ID: 1001, RepoID: 1, LogExpired: false, LogIndexes: []int64{1, 2, 3, 4}, LogFilename: "does-not-exist", Stopped: timeutil.TimeStamp(1)})
 
 		require.NoError(t, CleanupLogs(db.DefaultContext))
 
@@ -37,6 +37,7 @@ func TestCleanup(t *testing.T) {
 		for i := int64(0); i <= deleteLogBatchSize; i++ {
 			task := &actions_model.ActionTask{
 				ID:          1000 + i,
+				RepoID:      1,
 				LogExpired:  false,
 				LogIndexes:  []int64{},
 				LogFilename: "",

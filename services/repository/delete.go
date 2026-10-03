@@ -55,6 +55,9 @@ func DeleteRepositoryDirectly(ctx context.Context, repoID int64, opts DeleteRepo
 	}
 	defer committer.Close()
 	sess := db.GetEngine(ctx)
+	if err := actions_model.GuardRepositoryTaskDeletion(ctx, repoID); err != nil {
+		return err
+	}
 
 	repo := &repo_model.Repository{}
 	has, err := sess.ID(repoID).Get(repo)

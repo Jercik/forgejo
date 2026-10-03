@@ -23552,6 +23552,9 @@
       "description": "ActionRunner represents a runner",
       "type": "object",
       "properties": {
+        "admission": {
+          "$ref": "#/definitions/ActionRunnerAdmission"
+        },
         "description": {
           "description": "Description provides optional details about this runner.",
           "type": "string",
@@ -23612,6 +23615,79 @@
           "description": "Version is the self-reported version string of Forgejo Runner.",
           "type": "string",
           "x-go-name": "Version"
+        }
+      },
+      "x-go-package": "forgejo.org/modules/structs"
+    },
+    "ActionRunnerAdmission": {
+      "type": "object",
+      "title": "ActionRunnerAdmission is the configured maintenance contract, not a general runner health signal.",
+      "properties": {
+        "fenced": {
+          "type": "boolean",
+          "x-go-name": "Fenced"
+        },
+        "fetch_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "FetchSequence"
+        },
+        "last_fetch": {
+          "$ref": "#/definitions/ActionRunnerFetchObservation"
+        },
+        "lock_device": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "LockDevice"
+        },
+        "lock_inode": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "LockInode"
+        },
+        "nonterminal_tasks": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "NonterminalTasks"
+        },
+        "pending_final_reports": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "PendingFinalReports"
+        },
+        "process_id": {
+          "type": "string",
+          "x-go-name": "ProcessID"
+        },
+        "uncovered_nonterminal_tasks": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "UncoveredNonterminalTasks"
+        }
+      },
+      "x-go-package": "forgejo.org/modules/structs"
+    },
+    "ActionRunnerFetchObservation": {
+      "type": "object",
+      "properties": {
+        "fenced": {
+          "type": "boolean",
+          "x-go-name": "Fenced"
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Sequence"
+        },
+        "task_capacity": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "TaskCapacity"
+        },
+        "task_count": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "TaskCount"
         }
       },
       "x-go-package": "forgejo.org/modules/structs"

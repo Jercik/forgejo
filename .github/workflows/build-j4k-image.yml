@@ -23,6 +23,12 @@ jobs:
           make 'test-sqlite#TestActionsAPIRerunActionRun'
           make 'test-sqlite#TestActionsAPIRerunFailedJobs'
           make 'test-sqlite#TestActionsAPIRerunActionJob'
+          make 'test-sqlite#TestActionAdmission'
+          make 'test#TestAdmission' GO_TEST_PACKAGES=forgejo.org/modules/actions
+          make 'test#TestAdmissionBulkFetchStraddle' GO_TEST_PACKAGES=forgejo.org/routers/api/actions/runner
+          make 'test#TestCleanup' GO_TEST_PACKAGES=forgejo.org/services/actions
+          make 'test#TestAddTaskFinalReceiptPreservesLegacyNULL' GO_TEST_PACKAGES=forgejo.org/models/forgejo_migrations
+          make 'test#TestTaskFinalReceiptRegisteredUpgrade' GO_TEST_PACKAGES=forgejo.org/models/forgejo_migrations
           make 'test#TestRerunFailedJobs'
           make 'test#TestRender_TabBeforeFenceInContainer' GO_TEST_PACKAGES=forgejo.org/modules/markup/markdown
         env:

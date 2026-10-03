@@ -24,7 +24,16 @@ import (
 
 var ErrEphemeralRunnerHasAssignedTask = errors.New("ephemeral runner already has an assigned task")
 
-func PickTask(ctx context.Context, runner *actions_model.ActionRunner, requestKey, handle *string) (*runnerv1.Task, error) {
+func PickTask(ctx context.Context, runner *actions_model.ActionRunner, requestKey, handle *string) (taskResult *runnerv1.Task, resultErr error) {
+	release, err := actions_module.AcquireAdmission()
+	if errors.Is(err, actions_module.ErrAdmissionPaused) {
+		return nil, actions_model.ErrNoMatchingJobFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, release()) }()
+
 	var (
 		task *runnerv1.Task
 		job  *actions_model.ActionRunJob
@@ -109,6 +118,9 @@ func RecoverTasks(ctx context.Context, tasks []*actions_model.ActionTask) ([]*ru
 
 	err := db.WithTx(ctx, func(ctx context.Context) error {
 		for i, t := range tasks {
+			if err := actions_model.EnrollTaskReceipt(ctx, t); err != nil {
+				return err
+			}
 			// `Token` is stored in the database w/ a one-way hash, so we can't recover it from the original.  Instead
 			// we generate a new token to create usable runnerv1.Task objects.
 			t.GenerateToken()
@@ -385,6 +397,9 @@ func deleteTask(ctx context.Context, taskID int64) error {
 
 		if !task.Status.IsDone() {
 			return fmt.Errorf("unable to remove task %d because it has not completed yet", taskID)
+		}
+		if err := actions_model.GuardTaskDeletion(ctx, taskID); err != nil {
+			return err
 		}
 
 		if task.HasLogs() {

@@ -6,6 +6,7 @@ package misc
 import (
 	"net/http"
 
+	"forgejo.org/modules/actions"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/structs"
 	"forgejo.org/services/context"
@@ -21,11 +22,15 @@ func Version(ctx *context.APIContext) {
 	// responses:
 	//   "200":
 	//     "$ref": "#/responses/ServerVersion"
-	ctx.JSON(http.StatusOK, &structs.ServerVersion{
+	version := &structs.ServerVersion{
 		Version: setting.AppVer,
 		Capabilities: []string{
 			structs.ServerCapabilityActionsReviewerIsolation,
 			structs.ServerCapabilityActionsRerun,
 		},
-	})
+	}
+	if actions.AdmissionConfigured() {
+		version.Capabilities = append(version.Capabilities, structs.ServerCapabilityActionsAdmissionDrain)
+	}
+	ctx.JSON(http.StatusOK, version)
 }

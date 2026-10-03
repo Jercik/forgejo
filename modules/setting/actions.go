@@ -15,6 +15,7 @@ import (
 var (
 	Actions = struct {
 		Enabled                      bool
+		AdmissionLockPath            string            `ini:"ADMISSION_LOCK_PATH"`
 		LogStorage                   *Storage          // how the created logs should be stored
 		LogRetentionDays             int64             `ini:"LOG_RETENTION_DAYS"`
 		LogCompression               logCompression    `ini:"LOG_COMPRESSION"`

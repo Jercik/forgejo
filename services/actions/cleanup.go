@@ -17,6 +17,7 @@ import (
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/storage"
 	"forgejo.org/modules/timeutil"
+	"forgejo.org/modules/util"
 
 	"xorm.io/builder"
 )
@@ -102,35 +103,29 @@ const deleteLogBatchSize = 100
 
 // CleanupLogs removes logs which are older than the configured retention time
 func CleanupLogs(ctx context.Context) error {
+	return cleanupLogs(ctx, actions_model.FindOldTasksToExpire)
+}
+
+func cleanupLogs(ctx context.Context, findTasks func(context.Context, timeutil.TimeStamp, int, int64) ([]*actions_model.ActionTask, error)) error {
 	olderThan := timeutil.TimeStampNow().AddDuration(-time.Duration(setting.Actions.LogRetentionDays) * 24 * time.Hour)
 
 	count := 0
+	var afterID int64
 	for {
-		tasks, err := actions_model.FindOldTasksToExpire(ctx, olderThan, deleteLogBatchSize)
+		tasks, err := findTasks(ctx, olderThan, deleteLogBatchSize, afterID)
 		if err != nil {
 			return fmt.Errorf("could not retrieve tasks to expire: %w", err)
 		}
 		for _, task := range tasks {
-			if task.HasLogs() {
-				err = actions_module.RemoveLogs(ctx, task.LogInStorage, task.LogFilename)
-				if err != nil && !errors.Is(err, os.ErrNotExist) {
-					log.Error("Failed to remove log %s (in storage %v) of task %v: %v",
-						task.LogFilename, task.LogInStorage, task.ID, err)
-
-					// do not return error here, continue to next task
-					continue
-				}
-				log.Trace("Removed log %s of task %v", task.LogFilename, task.ID)
-			}
-
-			task.LogIndexes = nil // clear log indexes since it's a heavy field
-			task.LogExpired = true
-			if err := actions_model.UpdateTask(ctx, task, "log_indexes", "log_expired"); err != nil {
-				log.Error("Failed to update task %v: %v", task.ID, err)
-				// do not return error here, continue to next task
+			afterID = task.ID
+			expired, err := expireTaskLogs(ctx, task.ID, olderThan)
+			if err != nil {
+				log.Error("Failed to expire logs of task %v: %v", task.ID, err)
 				continue
 			}
-			count++
+			if expired {
+				count++
+			}
 		}
 		if len(tasks) < deleteLogBatchSize {
 			break
@@ -139,6 +134,44 @@ func CleanupLogs(ctx context.Context) error {
 
 	log.Info("Removed %d logs", count)
 	return nil
+}
+
+func expireTaskLogs(ctx context.Context, taskID int64, olderThan timeutil.TimeStamp) (expired bool, resultErr error) {
+	resultErr = db.WithTx(ctx, func(ctx context.Context) error {
+		task, err := actions_model.GetTaskByID(ctx, taskID)
+		if errors.Is(err, util.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := actions_model.LockTaskRepository(ctx, task.RepoID); err != nil {
+			return err
+		}
+		task, err = actions_model.GetTaskByID(ctx, taskID)
+		if errors.Is(err, util.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if task.LogExpired || task.Stopped <= 0 || task.Stopped >= olderThan || (task.RunnerFinalReportReceived.Valid && !task.RunnerFinalReportReceived.Bool) {
+			return nil
+		}
+		if task.HasLogs() {
+			if err := actions_module.RemoveLogs(ctx, task.LogInStorage, task.LogFilename); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		task.LogIndexes = nil
+		task.LogExpired = true
+		if err := actions_model.UpdateTask(ctx, task, "log_indexes", "log_expired"); err != nil {
+			return err
+		}
+		expired = true
+		return nil
+	})
+	return expired, resultErr
 }
 
 // CleanupEphemeralRunners removes used ephemeral runners which are no longer able to process jobs

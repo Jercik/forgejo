@@ -87,6 +87,9 @@ const ServerCapabilityActionsReviewerIsolation = "actions-reviewer-isolation"
 // regardless of whether a given one comes from the base or a fork patch.
 const ServerCapabilityActionsRerun = "actions-rerun"
 
+// ServerCapabilityActionsAdmissionDrain guarantees the configured admission fence, fresh idle observations and durable final-report receipts.
+const ServerCapabilityActionsAdmissionDrain = "actions-admission-drain"
+
 // GitignoreTemplateInfo name and text of a gitignore template
 type GitignoreTemplateInfo struct {
 	Name   string `json:"name"`

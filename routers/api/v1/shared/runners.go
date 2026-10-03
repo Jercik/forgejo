@@ -11,6 +11,7 @@ import (
 
 	actions_model "forgejo.org/models/actions"
 	"forgejo.org/models/db"
+	actions_module "forgejo.org/modules/actions"
 	"forgejo.org/modules/optional"
 	"forgejo.org/modules/structs"
 	"forgejo.org/modules/util"
@@ -144,6 +145,21 @@ func GetRunner(ctx *context.APIContext, ownerID, repoID, runnerID int64) {
 	if err != nil {
 		ctx.Error(http.StatusInternalServerError, "ToActionRunner", err)
 		return
+	}
+	if ownerID == 0 && repoID == 0 {
+		admission, err := actions_module.AdmissionSnapshot(runner.ID)
+		if err != nil {
+			ctx.InternalServerError(err)
+			return
+		}
+		if admission != nil {
+			admission.PendingFinalReports, admission.UncoveredNonterminalTasks, admission.NonterminalTasks, err = actions_model.TaskReceiptCounts(ctx)
+			if err != nil {
+				ctx.InternalServerError(err)
+				return
+			}
+			actionRunner.Admission = admission
+		}
 	}
 	ctx.JSON(http.StatusOK, actionRunner)
 }

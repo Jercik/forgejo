@@ -204,6 +204,9 @@ func DeleteRun(ctx context.Context, runID int64) error {
 		if !run.Status.IsDone() {
 			return fmt.Errorf("cannot delete run %d because it has not completed yet", run.ID)
 		}
+		if err := actions_model.LockTaskRepository(ctx, run.RepoID); err != nil {
+			return err
+		}
 
 		err = actions_model.SetArtifactsOfRunDeleted(ctx, runID)
 		if err != nil {

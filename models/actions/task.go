@@ -6,6 +6,7 @@ package actions
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -31,10 +32,12 @@ type ActionTask struct {
 	Job      *ActionRunJob     `xorm:"-"`
 	Steps    []*ActionTaskStep `xorm:"-"`
 	Attempt  int64
-	RunnerID int64              `xorm:"index index(request_key)"`
-	Status   Status             `xorm:"index"`
-	Started  timeutil.TimeStamp `xorm:"index"`
-	Stopped  timeutil.TimeStamp `xorm:"index(stopped_log_expired)"`
+	RunnerID int64 `xorm:"index index(request_key)"`
+	// NULL is legacy/uncovered; false is an assigned task awaiting runner final-report acceptance.
+	RunnerFinalReportReceived sql.NullBool       `xorm:"DEFAULT NULL"`
+	Status                    Status             `xorm:"index"`
+	Started                   timeutil.TimeStamp `xorm:"index"`
+	Stopped                   timeutil.TimeStamp `xorm:"index(stopped_log_expired)"`
 
 	RepoID            int64  `xorm:"index"`
 	OwnerID           int64  `xorm:"index"`
@@ -385,6 +388,9 @@ func CreateTaskForRunner(ctx context.Context, runner *ActionRunner, requestKey, 
 	if job == nil {
 		return nil, ErrNoMatchingJobFound
 	}
+	if err := LockTaskRepository(ctx, job.RepoID); err != nil {
+		return nil, err
+	}
 	if err := job.LoadAttributes(ctx); err != nil {
 		return nil, err
 	}
@@ -394,15 +400,16 @@ func CreateTaskForRunner(ctx context.Context, runner *ActionRunner, requestKey, 
 	job.Status = StatusRunning
 
 	task := &ActionTask{
-		JobID:             job.ID,
-		Attempt:           job.Attempt,
-		RunnerID:          runner.ID,
-		Started:           now,
-		Status:            StatusRunning,
-		RepoID:            job.RepoID,
-		OwnerID:           job.OwnerID,
-		CommitSHA:         job.CommitSHA,
-		IsForkPullRequest: job.IsForkPullRequest,
+		JobID:                     job.ID,
+		Attempt:                   job.Attempt,
+		RunnerID:                  runner.ID,
+		RunnerFinalReportReceived: sql.NullBool{Valid: true},
+		Started:                   now,
+		Status:                    StatusRunning,
+		RepoID:                    job.RepoID,
+		OwnerID:                   job.OwnerID,
+		CommitSHA:                 job.CommitSHA,
+		IsForkPullRequest:         job.IsForkPullRequest,
 	}
 	if requestKey != nil {
 		task.RunnerRequestKey = *requestKey
@@ -520,6 +527,9 @@ func UpdateTask(ctx context.Context, task *ActionTask, cols ...string) error {
 // caller's responsibility.
 func DeleteTask(ctx context.Context, taskID int64) error {
 	return db.WithTx(ctx, func(ctx context.Context) error {
+		if err := GuardTaskDeletion(ctx, taskID); err != nil {
+			return err
+		}
 		var err error
 		_, err = db.GetEngine(ctx).Delete(&ActionTaskStep{TaskID: taskID})
 		if err != nil {
@@ -537,12 +547,15 @@ func DeleteTask(ctx context.Context, taskID int64) error {
 	})
 }
 
-func FindOldTasksToExpire(ctx context.Context, olderThan timeutil.TimeStamp, limit int) ([]*ActionTask, error) {
+func FindOldTasksToExpire(ctx context.Context, olderThan timeutil.TimeStamp, limit int, afterID int64) ([]*ActionTask, error) {
 	e := db.GetEngine(ctx)
 
 	tasks := make([]*ActionTask, 0, limit)
 	// Check "stopped > 0" to avoid deleting tasks that are still running
 	return tasks, e.Where("stopped > 0 AND stopped < ? AND log_expired = ?", olderThan, false).
+		And("(runner_final_report_received IS NULL OR runner_final_report_received = ?)", true).
+		And("id > ?", afterID).
+		OrderBy("id").
 		Limit(limit).
 		Find(&tasks)
 }

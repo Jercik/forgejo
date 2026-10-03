@@ -59,6 +59,7 @@ func (status RunnerStatus) String() string {
 // ActionRunner represents a runner
 // swagger:model
 type ActionRunner struct {
+	Admission *ActionRunnerAdmission `json:"admission,omitempty"`
 	// ID uniquely identifies this runner.
 	ID int64 `json:"id"`
 	// UUID uniquely identifies this runner.
@@ -82,4 +83,24 @@ type ActionRunner struct {
 	Description string `json:"description"`
 	// Indicates if runner is ephemeral runner
 	Ephemeral bool `json:"ephemeral"`
+}
+
+// ActionRunnerAdmission is the configured maintenance contract, not a general runner health signal.
+type ActionRunnerAdmission struct {
+	ProcessID                 string                        `json:"process_id"`
+	FetchSequence             uint64                        `json:"fetch_sequence"`
+	Fenced                    bool                          `json:"fenced"`
+	LockDevice                uint64                        `json:"lock_device"`
+	LockInode                 uint64                        `json:"lock_inode"`
+	PendingFinalReports       int64                         `json:"pending_final_reports"`
+	UncoveredNonterminalTasks int64                         `json:"uncovered_nonterminal_tasks"`
+	NonterminalTasks          int64                         `json:"nonterminal_tasks"`
+	LastFetch                 *ActionRunnerFetchObservation `json:"last_fetch"`
+}
+
+type ActionRunnerFetchObservation struct {
+	Sequence     uint64 `json:"sequence"`
+	TaskCapacity *int64 `json:"task_capacity"`
+	TaskCount    uint64 `json:"task_count"`
+	Fenced       bool   `json:"fenced"`
 }

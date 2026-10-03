@@ -20,9 +20,18 @@ The fork carries these changes:
   a list or blockquote from blanking the whole rendered document. Upstream
   `v16.0.5` still uses `v1.8.2`. Drop this dependency carry when the pinned
   upstream release includes the fix and passes the regression test.
+- Actions maintenance uses an optional `[actions] ADMISSION_LOCK_PATH` and
+  advertises `actions-admission-drain` when configured. Shared file locks cover
+  task assignment; a host exclusive lock pauses new assignments while recovery
+  and reporting remain available. Admin runner GET responses expose fresh fetch
+  observations and global task receipt counts. See
+  [the maintenance contract](docs/actions-admission-drain.md).
 
-The fork delta has no database migrations. The upstream `v16.0.2` to `v16.0.5`
-upgrade adds `v17a_add-action-run-workflow-source-commit.go`; deployment rollback
+The fork adds `v16f_j4k-action-task-final-receipt.go` to retain runner final-report
+acceptance. Existing tasks remain uncovered SQL NULL; new assignments become
+pending until the runner's terminal report is accepted. The upstream `v16.0.2`
+to `v16.0.5` upgrade also adds `v17a_add-action-run-workflow-source-commit.go`.
+Deployment rollback
 therefore follows the cluster's coordinated database and data-volume restore
 procedure. See the cluster's `docs/adr/0010-forgejo-fork-image.md` and
 `roles/forgejo/README.md` for the backup gate and pin history.
