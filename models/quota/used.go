@@ -106,7 +106,7 @@ func makeUserOwnedCondition(q string, userID int64) builder.Cond {
 	switch q {
 	case "repositories", "attachments", "artifacts":
 		return builder.Eq{"`repository`.owner_id": userID}
-	case "packages":
+	case "packages", "packages_size":
 		return builder.Or(
 			builder.Eq{"`repository`.owner_id": userID},
 			builder.And(
@@ -132,7 +132,8 @@ func createQueryFor(ctx context.Context, userID int64, q string) db.Engine {
 		session = session.
 			Table("action_artifact").
 			Join("INNER", "`repository`", "`action_artifact`.repo_id = `repository`.id").
-			Where("`action_artifact`.status != ?", actions_model.ArtifactStatusExpired)
+			Where(builder.NotIn("`action_artifact`.status", actions_model.ArtifactStatusExpired,
+				actions_model.ArtifactStatusPendingDeletion, actions_model.ArtifactStatusDeleted))
 	case "packages":
 		session = session.
 			Table("package_version").
@@ -140,6 +141,17 @@ func createQueryFor(ctx context.Context, userID int64, q string) db.Engine {
 			Join("INNER", "`package_blob`", "`package_file`.blob_id = `package_blob`.id").
 			Join("INNER", "`package`", "`package_version`.package_id = `package`.id").
 			Join("LEFT OUTER", "`repository`", "`package`.repo_id = `repository`.id")
+	case "packages_size":
+		return session.
+			Table("package_blob").
+			Where(builder.In("package_blob.id", builder.
+				Select("DISTINCT package_file.blob_id").
+				From("package_version").
+				Join("INNER", "`package_file`", "`package_file`.version_id = `package_version`.id").
+				Join("INNER", "`package_blob`", "`package_file`.blob_id = `package_blob`.id").
+				Join("INNER", "`package`", "`package_version`.package_id = `package`.id").
+				Join("LEFT OUTER", "`repository`", "`package`.repo_id = `repository`.id").
+				Where(makeUserOwnedCondition(q, userID))))
 	}
 
 	return session.Where(makeUserOwnedCondition(q, userID))
@@ -242,7 +254,7 @@ func GetUsedForUser(ctx context.Context, userID int64) (*Used, error) {
 		return nil, err
 	}
 
-	_, err = createQueryFor(ctx, userID, "packages").
+	_, err = createQueryFor(ctx, userID, "packages_size").
 		Select("SUM(package_blob.size) AS size").
 		Get(&used.Size.Assets.Packages.All)
 	if err != nil {

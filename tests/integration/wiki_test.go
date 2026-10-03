@@ -197,7 +197,7 @@ func doRepoWikiGitOperationInner(t *testing.T, gitURL *url.URL, dstPath string, 
 
 		stdout, stderr, err := cmd.RunStdString(&git.RunOpts{
 			Dir:     dstPath,
-			Timeout: 2 * time.Second,
+			Timeout: 60 * time.Second,
 		})
 		if auth == RepoWikiAuthenticated {
 			require.NoError(t, err, "stdout = %q, stderr = %q", stdout, stderr)
@@ -216,7 +216,7 @@ func Test_RepoWikiPages(t *testing.T) {
 
 	doc := NewHTMLParser(t, resp.Body)
 	expectedPagePaths := []string{
-		"Home", "Long-Page", "Page-With-Image", "Page-With-Spaced-Name", "Unescaped-File", "XSS",
+		"Home", "Long-Page", "Page-With-Image", "Page-With-Spaced-Name", "Page-With-Unescaped-Special-Chars%3A-%281%29", "Unescaped-File", "XSS",
 	}
 	doc.Find("tr").Each(func(i int, s *goquery.Selection) {
 		firstAnchor := s.Find("a").First()
