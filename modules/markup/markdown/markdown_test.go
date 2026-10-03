@@ -49,6 +49,31 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestRender_TabBeforeFenceInContainer(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, container string
+	}{
+		{"blockquote-backtick", "> \t`", "<blockquote>"},
+		{"blockquote-tilde", "> \t~", "<blockquote>"},
+		{"list-backtick", "- a\n\n  \t`", "<li>"},
+		{"list-tilde", "- a\n\n  \t~", "<li>"},
+		{"blockquote-full-backticks", "> \t```", "<blockquote>"},
+		{"blockquote-full-tildes", "> \t~~~", "<blockquote>"},
+		{"list-full-backticks", "- a\n\n  \t```", "<li>"},
+		{"list-full-tildes", "- a\n\n  \t~~~", "<li>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := "# Report\n\nhello <b>x</b>\n\n" + tc.input
+			output, err := markdown.RenderString(&markup.RenderContext{Ctx: git.DefaultContext}, input)
+			require.NoError(t, err)
+			require.NotEmpty(t, output)
+			assert.Contains(t, string(output), "Report</h1>")
+			assert.Contains(t, string(output), "hello")
+			assert.Contains(t, string(output), tc.container)
+		})
+	}
+}
+
 func TestRender_StandardLinks(t *testing.T) {
 	setting.AppURL = AppURL
 

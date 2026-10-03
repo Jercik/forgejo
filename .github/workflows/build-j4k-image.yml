@@ -24,6 +24,7 @@ jobs:
           make 'test-sqlite#TestActionsAPIRerunFailedJobs'
           make 'test-sqlite#TestActionsAPIRerunActionJob'
           make 'test#TestRerunFailedJobs'
+          make 'test#TestRender_TabBeforeFenceInContainer' GO_TEST_PACKAGES=forgejo.org/modules/markup/markdown
         env:
           TAGS: sqlite sqlite_unlock_notify
         timeout-minutes: 40
