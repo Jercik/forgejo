@@ -46,19 +46,17 @@ type CreateOrgOption struct {
 	RepoAdminChangeTeamAccess bool   `json:"repo_admin_change_team_access"`
 }
 
-// TODO: make EditOrgOption fields optional after https://gitea.com/go-chi/binding/pulls/5 got merged
-
 // EditOrgOption options for editing an organization
 type EditOrgOption struct {
-	FullName    string  `json:"full_name" binding:"MaxSize(100)"`
+	FullName    *string `json:"full_name" binding:"MaxSize(100)"`
 	Email       *string `json:"email" binding:"MaxSize(255)"`
-	Description string  `json:"description" binding:"MaxSize(255)"`
-	Website     string  `json:"website" binding:"ValidSiteUrl;MaxSize(255)"`
-	Location    string  `json:"location" binding:"MaxSize(50)"`
+	Description *string `json:"description" binding:"MaxSize(255)"`
+	Website     *string `json:"website" binding:"ValidSiteUrl;MaxSize(255)"`
+	Location    *string `json:"location" binding:"MaxSize(50)"`
 	// possible values are `public`, `limited` or `private`
 	// enum: ["public", "limited", "private"]
-	Visibility                string `json:"visibility" binding:"In(,public,limited,private)"`
-	RepoAdminChangeTeamAccess *bool  `json:"repo_admin_change_team_access"`
+	Visibility                *string `json:"visibility" binding:"In(public,limited,private)"`
+	RepoAdminChangeTeamAccess *bool   `json:"repo_admin_change_team_access"`
 }
 
 // RenameOrgOption options when renaming an organization
