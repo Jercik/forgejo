@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	actions_model "forgejo.org/models/actions"
 	auth_model "forgejo.org/models/auth"
 	"forgejo.org/models/db"
 	issues_model "forgejo.org/models/issues"
@@ -58,6 +59,67 @@ func TestAPIPullReviewResolve(t *testing.T) {
 	assert.Nil(t, reviewComments[0].Resolver)
 
 	resolutionURL := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews/%d/comments/%d/resolution", repo.OwnerName, repo.Name, pullIssue.Index, review.ID, commentID)
+
+	t.Run("Actions token", func(t *testing.T) {
+		task := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionTask{ID: 47})
+		task.RepoID = repo.ID
+		task.OwnerID = repo.OwnerID
+		task.IsForkPullRequest = false
+		task.GenerateToken()
+		require.NoError(t, actions_model.UpdateTask(t.Context(), task, "repo_id", "owner_id", "is_fork_pull_request", "token_hash", "token_salt", "token_last_eight"))
+
+		resp := MakeRequest(t, NewRequest(t, http.MethodPost, resolutionURL).AddTokenAuth(task.Token), http.StatusOK)
+		var comment api.PullReviewComment
+		DecodeJSON(t, resp, &comment)
+		require.NotNil(t, comment.Resolver)
+		assert.Equal(t, "forgejo-actions", comment.Resolver.UserName)
+		persisted := unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ID: commentID})
+		assert.EqualValues(t, -2, persisted.ResolveDoerID)
+
+		resp = MakeRequest(t, NewRequest(t, http.MethodDelete, resolutionURL).AddTokenAuth(task.Token), http.StatusOK)
+		DecodeJSON(t, resp, &comment)
+		assert.Nil(t, comment.Resolver)
+		persisted = unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ID: commentID})
+		assert.Zero(t, persisted.ResolveDoerID)
+
+		var botReview api.PullReview
+		resp = MakeRequest(t, NewRequestWithJSON(t, http.MethodPost, fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews", repo.OwnerName, repo.Name, pullIssue.Index), &api.CreatePullReviewOptions{
+			Event: "COMMENT",
+			Comments: []api.CreatePullReviewComment{{
+				Path:       "README.md",
+				Body:       "Actions review comment",
+				NewLineNum: 1,
+			}},
+		}).AddTokenAuth(task.Token), http.StatusOK)
+		DecodeJSON(t, resp, &botReview)
+		botComment := unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ReviewID: botReview.ID, Type: issues_model.CommentTypeCode})
+		assert.EqualValues(t, -2, botComment.PosterID)
+		botResolutionURL := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews/%d/comments/%d/resolution", repo.OwnerName, repo.Name, pullIssue.Index, botReview.ID, botComment.ID)
+		resp = MakeRequest(t, NewRequest(t, http.MethodPost, botResolutionURL).AddTokenAuth(task.Token), http.StatusOK)
+		DecodeJSON(t, resp, &comment)
+		require.NotNil(t, comment.Resolver)
+		assert.Equal(t, "forgejo-actions", comment.Resolver.UserName)
+		botComment = unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ID: botComment.ID})
+		assert.EqualValues(t, -2, botComment.ResolveDoerID)
+		resp = MakeRequest(t, NewRequest(t, http.MethodDelete, botResolutionURL).AddTokenAuth(task.Token), http.StatusOK)
+		DecodeJSON(t, resp, &comment)
+		assert.Nil(t, comment.Resolver)
+		botComment = unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ID: botComment.ID})
+		assert.Zero(t, botComment.ResolveDoerID)
+
+		task.IsForkPullRequest = true
+		require.NoError(t, actions_model.UpdateTask(t.Context(), task, "is_fork_pull_request"))
+		MakeRequest(t, NewRequest(t, http.MethodPost, resolutionURL).AddTokenAuth(task.Token), http.StatusForbidden)
+		MakeRequest(t, NewRequest(t, http.MethodDelete, resolutionURL).AddTokenAuth(task.Token), http.StatusForbidden)
+
+		task.IsForkPullRequest = false
+		task.RepoID = 2
+		require.NoError(t, actions_model.UpdateTask(t.Context(), task, "repo_id", "is_fork_pull_request"))
+		MakeRequest(t, NewRequest(t, http.MethodPost, resolutionURL).AddTokenAuth(task.Token), http.StatusNotFound)
+		MakeRequest(t, NewRequest(t, http.MethodDelete, resolutionURL).AddTokenAuth(task.Token), http.StatusNotFound)
+		persisted = unittest.AssertExistsAndLoadBean(t, &issues_model.Comment{ID: commentID})
+		assert.Zero(t, persisted.ResolveDoerID)
+	})
 
 	// resolve the conversation
 	{
