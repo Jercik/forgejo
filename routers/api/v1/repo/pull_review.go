@@ -12,6 +12,7 @@ import (
 	issues_model "forgejo.org/models/issues"
 	"forgejo.org/models/organization"
 	"forgejo.org/models/perm"
+	"forgejo.org/models/unit"
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/gitrepo"
 	api "forgejo.org/modules/structs"
@@ -1206,10 +1207,17 @@ func markPullReviewCommentConversation(ctx *context.APIContext, isResolve bool) 
 		return
 	}
 
-	permResult, err := issues_model.CanMarkConversation(ctx, comment.Issue, ctx.Doer())
-	if err != nil {
-		ctx.InternalServerError(err)
-		return
+	var permResult bool
+	if ctx.Authentication().ActionsTaskID().Has() {
+		// Actions permissions belong to the task, not the shared synthetic user.
+		permResult = ctx.Permission().CanWrite(unit.TypePullRequests)
+	} else {
+		var err error
+		permResult, err = issues_model.CanMarkConversation(ctx, comment.Issue, ctx.Doer())
+		if err != nil {
+			ctx.InternalServerError(err)
+			return
+		}
 	}
 	if !permResult {
 		ctx.Error(http.StatusForbidden, "CanMarkConversation", "doer has no permission to mark this conversation")
