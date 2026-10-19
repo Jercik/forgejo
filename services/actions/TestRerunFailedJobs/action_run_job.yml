@@ -1,0 +1,163 @@
+# Jobs of the failed workflow run with several failed jobs.
+- id: 683950
+  run_id: 455720
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: a
+  attempt: 1
+  handle: 5b28b6d1-e19a-4b0a-9b74-1a1d3fa30b8f
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      a:
+        name: a
+        runs-on: ubuntu-latest
+        steps:
+          - run: echo "a"
+  job_id: a
+  needs: []
+  runs_on: ["ubuntu-latest"]
+  task_id: 0
+  status: 1 # success
+  started: 1776279254
+  stopped: 1776279260
+  created: 1776279254
+  updated: 1776279260
+- id: 683951
+  run_id: 455720
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: b
+  attempt: 1
+  handle: 15bd25be-0e2b-4c8a-9cf1-1e7a3ba2f2f6
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      b:
+        name: b
+        runs-on: ubuntu-latest
+        steps:
+          - run: echo "b"
+  job_id: b
+  needs: []
+  runs_on: ["ubuntu-latest"]
+  task_id: 0
+  status: 2 # failure
+  started: 1776279254
+  stopped: 1776279263
+  created: 1776279254
+  updated: 1776279263
+- id: 683952
+  run_id: 455720
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: c
+  attempt: 1
+  handle: 91d0ad78-2f1c-4f57-a5b5-b3b0b6c6f6a2
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      c:
+        name: c
+        runs-on: ubuntu-latest
+        steps:
+          - run: echo "c"
+  job_id: c
+  needs: []
+  runs_on: ["ubuntu-latest"]
+  task_id: 0
+  status: 2 # failure
+  started: 1776279254
+  stopped: 1776279265
+  created: 1776279254
+  updated: 1776279265
+
+# Jobs of the failed workflow run with a still running dependent job.
+- id: 683960
+  run_id: 455730
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: m
+  attempt: 1
+  handle: 8f0eab8a-9d4e-4b62-8c22-6b1f2a17b0e1
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      m:
+        name: m
+        runs-on: ubuntu-latest
+        steps:
+          - run: echo "m"
+  job_id: m
+  needs: []
+  runs_on: ["ubuntu-latest"]
+  task_id: 0
+  status: 2 # failure
+  started: 1776279254
+  stopped: 1776279263
+  created: 1776279254
+  updated: 1776279263
+- id: 683961
+  run_id: 455730
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: r
+  attempt: 1
+  handle: 5c6b0b64-3a26-4e79-9b18-58a9e0b2cf17
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      r:
+        name: r
+        runs-on: ubuntu-latest
+        needs: [m]
+        if: always()
+        steps:
+          - run: echo "r"
+  job_id: r
+  needs: [m]
+  runs_on: ["ubuntu-latest"]
+  task_id: 99001
+  status: 6 # running
+  started: 1776279263
+  stopped: 0
+  created: 1776279254
+  updated: 1776279263
+
+# Jobs of the successful workflow run.
+- id: 683970
+  run_id: 455740
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  name: s
+  attempt: 1
+  handle: b0f5a2f4-2f0e-4a0a-8a4a-1e35a0a5e5f2
+  workflow_payload: |
+    "on":
+      push:
+    jobs:
+      s:
+        name: s
+        runs-on: ubuntu-latest
+        steps:
+          - run: echo "s"
+  job_id: s
+  needs: []
+  runs_on: ["ubuntu-latest"]
+  task_id: 0
+  status: 1 # success
+  started: 1776279254
+  stopped: 1776279265
+  created: 1776279254
+  updated: 1776279265

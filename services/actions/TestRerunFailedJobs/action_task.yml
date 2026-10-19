@@ -1,0 +1,19 @@
+- id: 99001
+  job_id: 683961
+  attempt: 1
+  runner_id: 10000101
+  status: 6 # running
+  started: 1776279263
+  stopped: 0
+  repo_id: 62
+  owner_id: 2
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  is_fork_pull_request: false
+  token_hash: 7e7a3e2a0a1de3ec6a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f607182
+  token_salt: 3nGx9AtQpL
+  token_last_eight: 4e5f6071
+  log_filename: test-workflows/99/99001.log
+  log_in_storage: false
+  log_length: 0
+  log_size: 0
+  log_expired: false

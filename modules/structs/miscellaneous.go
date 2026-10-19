@@ -74,7 +74,18 @@ type MarkdownRender string
 // ServerVersion wraps the version of the server
 type ServerVersion struct {
 	Version string `json:"version"`
+	// Capabilities advertised by this server build.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// ServerCapabilityActionsReviewerIsolation guarantees that synthetic Actions
+// users cannot select another reviewer's pending review.
+const ServerCapabilityActionsReviewerIsolation = "actions-reviewer-isolation"
+
+// ServerCapabilityActionsRerun guarantees that the server provides all three
+// Actions rerun endpoints — run rerun, rerun-failed-jobs and job rerun —
+// regardless of whether a given one comes from the base or a fork patch.
+const ServerCapabilityActionsRerun = "actions-rerun"
 
 // GitignoreTemplateInfo name and text of a gitignore template
 type GitignoreTemplateInfo struct {
