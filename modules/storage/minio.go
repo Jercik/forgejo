@@ -210,21 +210,28 @@ func (m *MinioStorage) Open(path string) (Object, error) {
 
 // Save saves a file to minio
 func (m *MinioStorage) Save(path string, r io.Reader, size int64) (int64, error) {
-	uploadInfo, err := m.client.PutObject(
-		m.ctx,
-		m.bucket,
-		m.buildMinioPath(path),
-		r,
-		size,
-		minio.PutObjectOptions{
-			ContentType: "application/octet-stream",
-			// some storages like:
-			// * https://developers.cloudflare.com/r2/api/s3/api/
-			// * https://www.backblaze.com/b2/docs/s3_compatible_api.html
-			// do not support "x-amz-checksum-algorithm" header, so use legacy MD5 checksum
-			SendContentMd5: m.cfg.ChecksumAlgorithm == "md5",
-		},
-	)
+	opts := minio.PutObjectOptions{
+		ContentType: "application/octet-stream",
+		// some storages like:
+		// * https://developers.cloudflare.com/r2/api/s3/api/
+		// * https://www.backblaze.com/b2/docs/s3_compatible_api.html
+		// do not support "x-amz-checksum-algorithm" header, so use legacy MD5 checksum
+		SendContentMd5: m.cfg.ChecksumAlgorithm == "md5",
+	}
+	if size < 0 {
+		// When we can't provide the specific size coming out of `r`, minio will use a multipart upload, and it will
+		// default to supporting it's default maximum file size (5 TB) divided by its maximum number of parts (10,000),
+		// which is about 528 MB, and minio will allocate an in-memory buffer to read from `r` for that size.
+		//
+		// The most common case in Forgejo for a -1 file size is from action log uploads, where the zstd compression
+		// that is occurring into a pipe prevents us from knowing the file size before upload; the other case in the
+		// code is repo archiving.  Those cases doesn't need a 528 MB buffer, so we provide an explicit smaller buffer.
+		// This does limit uploads in this case to 10000 (minio's default max part count) * 16 MB, which is 160 GB, but
+		// that's more than reasonable.
+		opts.PartSize = 1024 * 1024 * 16
+	}
+
+	uploadInfo, err := m.client.PutObject(m.ctx, m.bucket, m.buildMinioPath(path), r, size, opts)
 	if err != nil {
 		return 0, convertMinioErr(err)
 	}

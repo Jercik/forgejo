@@ -1,8 +1,8 @@
 # The j4k Forgejo fork
 
-This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v16.0.5`
-(`8d24b7d52df327118cd776cf461d34e52e0ec1ce`). The next release is
-`v16.0.5-j4k.1`, published as `ghcr.io/jercik/forgejo:16.0.5-j4k.1-rootless`.
+This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v16.0.6`
+(`1aa13944143b3bc4312607239a68da23512d5ce3`). The next release is
+`v16.0.6-j4k.1`, published as `ghcr.io/jercik/forgejo:16.0.6-j4k.1-rootless`.
 
 The fork carries these changes:
 
@@ -18,7 +18,7 @@ The fork carries these changes:
   endpoint originated in upstream PR #13924.
 - Goldmark `v1.8.6` prevents a tab followed by a single backtick or tilde inside
   a list or blockquote from blanking the whole rendered document. Upstream
-  `v16.0.5` still uses `v1.8.2`. Drop this dependency carry when the pinned
+  `v16.0.6` still uses `v1.8.2`. Drop this dependency carry when the pinned
   upstream release includes the fix and passes the regression test.
 
 The fork delta has no database migrations. The upstream `v16.0.2` to `v16.0.5`

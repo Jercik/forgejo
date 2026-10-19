@@ -158,7 +158,6 @@ func Dashboard(ctx *context.Context) {
 		entries = append(entries, "resync_all_sshkeys", "resync_all_sshprincipals")
 	}
 	entries = append(entries, []string{
-		"resync_all_hooks",
 		"reinit_missing_repos",
 		"sync_external_users",
 		"repo_health_check",

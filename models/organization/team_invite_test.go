@@ -35,6 +35,9 @@ func TestTeamInvite(t *testing.T) {
 		// user 4 already added to team 2, should result in error
 		_, err := organization.CreateTeamInviteForUser(db.DefaultContext, user2, user4, team)
 		require.Error(t, err)
+		invited, err := organization.IsInvitedToOrganization(db.DefaultContext, team.OrgID, user4.ID)
+		require.NoError(t, err)
+		require.False(t, invited)
 	})
 
 	t.Run("CreateAndRemoveByUser", func(t *testing.T) {
@@ -44,6 +47,9 @@ func TestTeamInvite(t *testing.T) {
 		invite, err := organization.CreateTeamInviteForUser(db.DefaultContext, user1, user5, team)
 		assert.NotNil(t, invite)
 		require.NoError(t, err)
+		invited, err := organization.IsInvitedToOrganization(db.DefaultContext, team.OrgID, user5.ID)
+		require.NoError(t, err)
+		require.True(t, invited)
 
 		// Shouldn't allow duplicate invite by email
 		_, err = organization.CreateTeamInviteByEmail(db.DefaultContext, user1, team, user5.Email)

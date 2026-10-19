@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"testing"
 	"time"
 
 	"forgejo.org/models/db"
@@ -30,6 +31,11 @@ import (
 	app_context "forgejo.org/services/context"
 	repo_service "forgejo.org/services/repository"
 )
+
+// TestSeamPostReceiveSync is a test seam (a place where you can alter behaviour without editing the code) that is
+// invoked when post-receive hook is just about to sync branches to the database, but hasn't yet.  This should only be
+// used in test code.
+var TestSeamPostReceiveSync func(*repo_module.PushUpdateOptions)
 
 // HookPostReceive updates services and users
 func HookPostReceive(ctx *app_context.PrivateContext) {
@@ -126,16 +132,15 @@ func HookPostReceive(ctx *app_context.PrivateContext) {
 				return
 			}
 
-			var (
-				branchNames = make([]string, 0, len(branchesToSync))
-				commitIDs   = make([]string, 0, len(branchesToSync))
-			)
+			branchNames := make([]string, 0, len(branchesToSync))
 			for _, update := range branchesToSync {
 				branchNames = append(branchNames, update.RefFullName.BranchName())
-				commitIDs = append(commitIDs, update.NewCommitID)
+				if TestSeamPostReceiveSync != nil && testing.Testing() {
+					TestSeamPostReceiveSync(update)
+				}
 			}
 
-			err = repo_service.SyncBranchesToDB(ctx, repo.ID, opts.UserID, branchNames, commitIDs, gitRepo.GetCommit)
+			err = repo_service.SyncBranchesToDB(ctx, repo.ID, opts.UserID, branchNames, gitRepo.GetBranchCommit)
 			gitRepo.Close()
 			if err != nil {
 				ctx.JSON(http.StatusInternalServerError, private.HookPostReceiveResult{

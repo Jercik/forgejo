@@ -21,7 +21,6 @@ var commonEntries = []string{
 	"delete_repo_archives",
 	"delete_missing_repos",
 	"git_gc_repos",
-	"resync_all_hooks",
 	"reinit_missing_repos",
 	"sync_external_users",
 	"repo_health_check",

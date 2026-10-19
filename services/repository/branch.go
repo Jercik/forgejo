@@ -18,6 +18,7 @@ import (
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unit"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/cache"
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/gitrepo"
 	"forgejo.org/modules/graceful"
@@ -234,26 +235,17 @@ func checkBranchName(ctx context.Context, repo *repo_model.Repository, name stri
 	return err
 }
 
+var syncBranchLock = cache.MutexMap{}
+
 // SyncBranchesToDB sync the branch information in the database.
 // It will check whether the branches of the repository have never been synced before.
 // If so, it will sync all branches of the repository.
 // Otherwise, it will sync the branches that need to be updated.
-func SyncBranchesToDB(ctx context.Context, repoID, pusherID int64, branchNames, commitIDs []string, getCommit func(commitID string) (*git.Commit, error)) error {
-	// Some designs that make the code look strange but are made for performance optimization purposes:
-	// 1. Sync branches in a batch to reduce the number of DB queries.
-	// 2. Lazy load commit information since it may be not necessary.
-	// 3. Exit early if synced all branches of git repo when there's no branch in DB.
-	// 4. Check the branches in DB if they are already synced.
-	//
-	// If the user pushes many branches at once, the Git hook will call the internal API in batches, rather than all at once.
-	// See https://github.com/go-gitea/gitea/blob/cb52b17f92e2d2293f7c003649743464492bca48/cmd/hook.go#L27
-	// For the first batch, it will hit optimization 3.
-	// For other batches, it will hit optimization 4.
-
-	if len(branchNames) != len(commitIDs) {
-		return errors.New("branchNames and commitIDs length not match")
-	}
-
+func SyncBranchesToDB(ctx context.Context, repoID, pusherID int64, branchNames []string, getBranchCommit func(branchName string) (*git.Commit, error)) error {
+	// Implementation notes: hook post-receive will be executing this function in small batches (see `hookBatchSize`),
+	// not with all branches that are received at once. Also, concurrent execution will happen, even for the same
+	// branches, when pushes are executed quickly; the git repository is the source-of-truth for the current state as
+	// all in-memory data may be outdated by concurrent modifications.
 	return db.WithTx(ctx, func(ctx context.Context) error {
 		branches, err := git_model.GetBranches(ctx, repoID, branchNames, true)
 		if err != nil {
@@ -283,43 +275,68 @@ func SyncBranchesToDB(ctx context.Context, repoID, pusherID int64, branchNames, 
 			branchMap[branch.Name] = branch
 		}
 
-		newBranches := make([]*git_model.Branch, 0, len(branchNames))
-
-		for i, branchName := range branchNames {
-			commitID := commitIDs[i]
-			branch, exist := branchMap[branchName]
-			if exist && branch.CommitID == commitID && !branch.IsDeleted {
-				continue
-			}
-
-			commit, err := getCommit(commitID)
+		for _, branchName := range branchNames {
+			err := syncSingleBranch(ctx, repoID, pusherID, branchName, getBranchCommit, branchMap)
 			if err != nil {
-				return fmt.Errorf("get commit of %s failed: %v", branchName, err)
+				return err
 			}
-
-			if exist {
-				if _, err := git_model.UpdateBranch(ctx, repoID, pusherID, branchName, commit); err != nil {
-					return fmt.Errorf("git_model.UpdateBranch %d:%s failed: %v", repoID, branchName, err)
-				}
-				continue
-			}
-
-			// if database have branches but not this branch, it means this is a new branch
-			newBranches = append(newBranches, &git_model.Branch{
-				RepoID:        repoID,
-				Name:          branchName,
-				CommitID:      commit.ID.String(),
-				CommitMessage: commit.Summary(),
-				PusherID:      pusherID,
-				CommitTime:    timeutil.TimeStamp(commit.Committer.When.Unix()),
-			})
 		}
 
-		if len(newBranches) > 0 {
-			return db.Insert(ctx, newBranches)
-		}
 		return nil
 	})
+}
+
+// Sync branchName's state from the git repo to the DB.
+func syncSingleBranch(
+	ctx context.Context,
+	repoID, pusherID int64,
+	branchName string,
+	getBranchCommit func(branchName string) (*git.Commit, error),
+	branchMap map[string]*git_model.Branch,
+) error {
+	// Multiple invocations to syncSingleBranch can occur concurrently for the same branch if pushes occur in close
+	// succession to each other; by locking here, and by reading the git repo's state of the branch (rather than being
+	// provided the state from the post-receive hook), we guarantee that the branch table will reach the current state
+	// even with concurrent requests (excluding error states).
+	defer syncBranchLock.Lock(fmt.Sprintf("%d/%s", repoID, branchName))()
+
+	commit, err := getBranchCommit(branchName)
+	if git.IsErrNotExist(err) {
+		// Branch has been removed from the repo since this SyncBranchesToDB was invoked; no update is required here
+		// because when the branch was deleted then post-receive-hook would have updated the record directly via
+		// git_model.AddDeletedBranch.
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("get commit of %d:%s failed: %v", repoID, branchName, err)
+	}
+
+	branch, exist := branchMap[branchName]
+	if exist && branch.CommitID == commit.ID.String() && !branch.IsDeleted {
+		// Already up-to-date.
+		return nil
+	}
+
+	if exist {
+		if rowCount, err := git_model.UpdateBranch(ctx, repoID, pusherID, branchName, commit); err != nil {
+			return fmt.Errorf("git_model.UpdateBranch %d:%s failed: %v", repoID, branchName, err)
+		} else if rowCount != 1 {
+			return fmt.Errorf("git_model.UpdateBranch %d:%s failed: %d records updated", repoID, branchName, rowCount)
+		}
+		return nil
+	}
+
+	if err := db.Insert(ctx, &git_model.Branch{
+		RepoID:        repoID,
+		Name:          branchName,
+		CommitID:      commit.ID.String(),
+		CommitMessage: commit.Summary(),
+		PusherID:      pusherID,
+		CommitTime:    timeutil.TimeStamp(commit.Committer.When.Unix()),
+	}); err != nil {
+		return fmt.Errorf("inserting new branch %d:%s: %w", repoID, branchName, err)
+	}
+
+	return nil
 }
 
 // CreateNewBranchFromCommit creates a new repository branch

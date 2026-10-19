@@ -192,7 +192,6 @@ func CommonRoutes() *web.Route {
 
 	verifyAuth(r, []auth.Method{
 		&auth_method.OAuth2{},
-		&auth_method.Basic{},
 		&auth_method.AccessToken{
 			PermitBasic:  true,
 			PermitBearer: true,
@@ -205,7 +204,10 @@ func CommonRoutes() *web.Route {
 		&nuget.Auth{},
 		&conan.Auth{},
 		&chef.Auth{},
-		&auth_method.AuthorizedIntegration{},
+		&auth_method.AuthorizedIntegration{
+			PermitBasic: true,
+		},
+		&auth_method.Basic{},
 	})
 
 	r.Group("/{username}", func() {
@@ -848,7 +850,6 @@ func ContainerRoutes() *web.Route {
 	r.Use(context.PackageContexter())
 
 	verifyContainerAuth(r, []auth.Method{
-		&auth_method.Basic{},
 		&auth_method.AccessToken{
 			PermitBasic: true,
 		},
@@ -861,6 +862,7 @@ func ContainerRoutes() *web.Route {
 			// `Authorization: Basic ...`.
 			PermitBasic: true,
 		},
+		&auth_method.Basic{},
 	})
 
 	r.Get("", container.ReqContainerAccess, container.DetermineSupport)

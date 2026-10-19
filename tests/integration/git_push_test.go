@@ -6,7 +6,9 @@ package integration
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"forgejo.org/models/db"
 	git_model "forgejo.org/models/git"
@@ -16,6 +18,8 @@ import (
 	user_model "forgejo.org/models/user"
 	"forgejo.org/modules/git"
 	repo_module "forgejo.org/modules/repository"
+	"forgejo.org/modules/test"
+	"forgejo.org/routers/private"
 	pull_service "forgejo.org/services/pull"
 	repo_service "forgejo.org/services/repository"
 	"forgejo.org/tests"
@@ -378,5 +382,103 @@ func TestGitPushAllowMaintainerEditRestrictedHead(t *testing.T) {
 		doGitAddSomeCommits(baseRepoPath, branchName)(t)       // Ensure we have new commits ready to push
 		doGitAddSomeCommits(baseRepoPath, "another-branch")(t) // Ensure we have new commits ready to push
 		doGitPushTestRepositoryFail(t, baseRepoPath, "fork", branchName, "another-branch")
+	})
+}
+
+// Two pushes to the same branch that are processed concurrently must not roll back the branch's commit ID in the
+// database.  This is tricky to test; `TestSeamPostReceiveSync` is used in the post-receive hook to cause a process to
+// stall to replicate the uncertain concurrency that occurs in reality.
+func TestGitPushConcurrentBranchUpdate(t *testing.T) {
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		owner := forgery.CreateUser(t, &forgery.CreateUserOptions{})
+
+		repo := forgery.CreateRepository(t, owner, &forgery.CreateRepositoryOptions{
+			Files: forgery.FilesInit{},
+		})
+		branchName := repo.DefaultBranch
+
+		repoPath := t.TempDir()
+		u.Path = repo.FullName() + ".git"
+		u.User = url.UserPassword(owner.LowerName, userPassword)
+		doGitClone(repoPath, u)(t)
+
+		revParseHead := func() string {
+			stdout, _, err := git.NewCommand(git.DefaultContext, "rev-parse", "HEAD").RunStdString(&git.RunOpts{Dir: repoPath})
+			require.NoError(t, err)
+			return strings.TrimSpace(stdout)
+		}
+		initialCommitID := revParseHead()
+		doGitAddSomeCommits(repoPath, branchName)(t)
+		firstCommitID := revParseHead()
+		doGitAddSomeCommits(repoPath, branchName)(t)
+		secondCommitID := revParseHead()
+		t.Logf("initialCommitID = %q", initialCommitID)
+		t.Logf("firstCommitID = %q", firstCommitID)
+		t.Logf("secondCommitID = %q", secondCommitID)
+
+		pushCommit := func(commitID string) error {
+			_, stderr, err := git.NewCommand(git.DefaultContext, "push", "origin").
+				AddDynamicArguments(fmt.Sprintf("%s:refs/heads/%s", commitID, branchName)).
+				RunStdString(&git.RunOpts{Dir: repoPath})
+			if err != nil {
+				return fmt.Errorf("%s: %w", stderr, err)
+			}
+			return nil
+		}
+
+		assertBranchCommitInDB := func(expectedCommitID string) {
+			t.Helper()
+			branch, err := git_model.GetBranch(t.Context(), repo.ID, branchName)
+			require.NoError(t, err)
+			assert.Equal(t, expectedCommitID, branch.CommitID)
+		}
+
+		// Inject into the post-receive handler a function which recognizes when we're pushing the first commit, and
+		// freezes the goroutine until we want it to continue.
+		firstPostReceiveHookRunning := make(chan any, 1)
+		unblockFirstPostReceiveHook := make(chan any, 1)
+		defer test.MockVariableValue(&private.TestSeamPostReceiveSync, func(puo *repo_module.PushUpdateOptions) {
+			if puo.NewCommitID == firstCommitID {
+				close(firstPostReceiveHookRunning)
+				<-unblockFirstPostReceiveHook
+			}
+		})()
+
+		// Begin the first push of `firstCommitID`; runs in a goroutine because it will be blocked by the
+		// TestSeamPostReceiveSync implementation.
+		firstPushDone := make(chan error, 1)
+		go func() {
+			firstPushDone <- pushCommit(firstCommitID)
+		}()
+		firstPushReleased := false
+		finishFirstPush := func() {
+			if !firstPushReleased {
+				firstPushReleased = true
+				close(unblockFirstPostReceiveHook)
+				assert.NoError(t, <-firstPushDone)
+			}
+		}
+		defer finishFirstPush() // if test fails/exits, still try to cleanup the running goroutine
+
+		// Wait until the first post-receive hook is running, identified by firstPostReceiveHookRunning:
+		select {
+		case <-firstPostReceiveHookRunning:
+			// Expected - first push is now waiting on the post-receive hook to complete
+		case <-time.NewTimer(30 * time.Second).C:
+			assert.FailNow(t, "first push's post-receive hook never started")
+		case <-t.Context().Done():
+		}
+
+		// Test pre-condition: the first push, which should be stalled right now, should not have yet updated the
+		// database to the first commit ID.  If it has, something has gone wrong and the test scenario isn't valid.
+		assertBranchCommitInDB(initialCommitID)
+
+		// Second push: runs to completion while the first push is stalled.
+		require.NoError(t, pushCommit(secondCommitID))
+		assertBranchCommitInDB(secondCommitID)
+
+		// Allow the first push's post-receive to complete; it must not revert the branch to firstCommitID.
+		finishFirstPush()
+		assertBranchCommitInDB(secondCommitID)
 	})
 }

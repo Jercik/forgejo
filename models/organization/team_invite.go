@@ -213,6 +213,16 @@ func GetInviteByToken(ctx context.Context, token string) (*TeamInvite, error) {
 	return invite, nil
 }
 
+// IsInvitedToOrganization returns whether a user has a pending invitation to any team in the organization
+func IsInvitedToOrganization(ctx context.Context, orgID, userID int64) (bool, error) {
+	invite := &TeamInvite{
+		OrgID:     orgID,
+		InvitedID: optional.Some(userID),
+	}
+
+	return db.GetEngine(ctx).Exist(invite)
+}
+
 func (i *TeamInvite) LoadInvitedUser(ctx context.Context) error {
 	if i.InvitedUser == nil {
 		hasInvitedUser, userID := i.InvitedID.Get()

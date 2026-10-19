@@ -321,6 +321,8 @@ func TestValidatePackageSpec(t *testing.T) {
 		p := newpkg()
 		for _, version := range []string{
 			"1.2.3-1",
+			"0:1.2.3-1",
+			"123:1.2.3-1",
 			"1.2.3-10.2",
 			"Frogejo-1",
 			"!\"#$%&'()*+,.;<=>?@[\\]^_`{|}~-1",
@@ -341,6 +343,8 @@ func TestValidatePackageSpec(t *testing.T) {
 			"🐸-1",
 			"1.2.3-a",
 			"1.2.3-1.2.3",
+			"-123:1.2.3-1",
+			"abc:1.2.3-1",
 			"1",
 			"-",
 			"1-",
