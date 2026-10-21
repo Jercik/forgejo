@@ -1,0 +1,17 @@
+- id: 10000101
+  uuid: 2f2b6f6a-1c2d-4e3f-8a9b-0c1d2e3f4a5b
+  name: test-workflows-runner
+  version: v6.3.1+7-gc4c0ca0
+  owner_id: 0
+  repo_id: 62
+  description: ""
+  base: 0
+  repo_range: ""
+  token_hash: 1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80910
+  token_salt: Kq7ZbTn2Ld
+  last_online: 1776279263
+  last_active: 1776279263
+  agent_labels: '["ubuntu-latest"]'
+  created: 1776279254
+  updated: 1776279263
+  deleted: ~

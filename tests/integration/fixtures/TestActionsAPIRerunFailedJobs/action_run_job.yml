@@ -1,0 +1,98 @@
+# Jobs of the failed run. They are declared in an order in which a dependent job
+# (h) precedes the job it depends on (d), and the two rows of job g are the
+# expansions of one matrix job.
+- id: 48031
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: a
+  status: 1 # StatusSuccess
+
+- id: 48032
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: b
+  needs: [a]
+  status: 2 # StatusFailure
+
+- id: 48033
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: c
+  status: 2 # StatusFailure
+
+- id: 48034
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: h
+  needs: [d]
+  status: 4 # StatusSkipped
+
+- id: 48035
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: d
+  needs: [c]
+  status: 4 # StatusSkipped
+
+- id: 48036
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: e
+  status: 3 # StatusCancelled
+
+- id: 48037
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: f
+  needs: [e]
+  status: 2 # StatusFailure
+
+- id: 48038
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: g
+  needs: [c]
+  status: 4 # StatusSkipped
+
+- id: 48039
+  run_id: 35031
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: g
+  needs: [c]
+  status: 4 # StatusSkipped
+
+# Job of the still running run.
+- id: 48043
+  run_id: 35032
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: a
+  status: 6 # StatusRunning
+
+# Job of the successful run.
+- id: 48044
+  run_id: 35033
+  repo_id: 1
+  owner_id: 2
+  attempt: 1
+  job_id: a
+  status: 1 # StatusSuccess

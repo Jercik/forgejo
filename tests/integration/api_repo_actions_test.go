@@ -942,6 +942,420 @@ func TestActionsAPICancelActionRun(t *testing.T) {
 	})
 }
 
+func TestActionsAPIRerunActionRun(t *testing.T) {
+	t.Run("Run rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionRun")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35021})
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 48021, RunID: run.ID})
+		require.Equal(t, actions_model.StatusFailure, run.Status)
+		require.Equal(t, actions_model.StatusFailure, job.Status)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d/rerun", repo1.FullName(), run.ID)
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNoContent)
+
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: run.ID})
+		assert.Equal(t, actions_model.StatusWaiting, run.Status)
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: job.ID})
+		assert.Equal(t, actions_model.StatusWaiting, job.Status)
+		assert.EqualValues(t, 2, job.Attempt)
+	})
+
+	t.Run("Still running run cannot be rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionRun")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35022})
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 48022, RunID: run.ID})
+		require.Equal(t, actions_model.StatusRunning, run.Status)
+		require.Equal(t, actions_model.StatusRunning, job.Status)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d/rerun", repo1.FullName(), run.ID)
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusBadRequest)
+
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: run.ID})
+		assert.Equal(t, actions_model.StatusRunning, run.Status)
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: job.ID})
+		assert.Equal(t, actions_model.StatusRunning, job.Status)
+		assert.EqualValues(t, 1, job.Attempt)
+	})
+
+	t.Run("Not found if run does not belong to repository", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionRun")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo62 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 62, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35021})
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 48021, RunID: run.ID})
+		require.Equal(t, actions_model.StatusFailure, run.Status)
+		require.Equal(t, actions_model.StatusFailure, job.Status)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d/rerun", repo62.FullName(), run.ID)
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: run.ID})
+		assert.Equal(t, actions_model.StatusFailure, run.Status)
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: job.ID})
+		assert.Equal(t, actions_model.StatusFailure, job.Status)
+		assert.EqualValues(t, 1, job.Attempt)
+	})
+
+	t.Run("Not found if run does not exist", func(t *testing.T) {
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		unittest.AssertNotExistsBean(t, &actions_model.ActionRun{ID: 260871})
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/260871/rerun", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+	})
+
+	t.Run("Run rerun requires write token", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionRun")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		readToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeReadRepository)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35021})
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: 48021, RunID: run.ID})
+		require.Equal(t, actions_model.StatusFailure, run.Status)
+		require.Equal(t, actions_model.StatusFailure, job.Status)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/%d/rerun", repo1.FullName(), run.ID)
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(readToken)
+		response := MakeRequest(t, request, http.StatusForbidden)
+
+		type errorResponse struct {
+			Message string `json:"message"`
+		}
+
+		var errorMessage *errorResponse
+		DecodeJSON(t, response, &errorMessage)
+
+		assert.Equal(t, "token does not have at least one of required scope(s): [write:repository]", errorMessage.Message)
+
+		run = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: run.ID})
+		assert.Equal(t, actions_model.StatusFailure, run.Status)
+		job = unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: job.ID})
+		assert.Equal(t, actions_model.StatusFailure, job.Status)
+		assert.EqualValues(t, 1, job.Attempt)
+	})
+}
+
+func TestActionsAPIRerunFailedJobs(t *testing.T) {
+	assertJob := func(t *testing.T, jobID int64, status actions_model.Status, attempt int64) {
+		t.Helper()
+
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: jobID})
+		assert.Equal(t, status, job.Status, "status of job %d", jobID)
+		assert.EqualValues(t, attempt, job.Attempt, "attempt of job %d", jobID)
+	}
+
+	assertFailedRunUntouched := func(t *testing.T) {
+		t.Helper()
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35031})
+		assert.Equal(t, actions_model.StatusFailure, run.Status)
+
+		assertJob(t, 48031, actions_model.StatusSuccess, 1)
+		assertJob(t, 48032, actions_model.StatusFailure, 1)
+		assertJob(t, 48033, actions_model.StatusFailure, 1)
+		assertJob(t, 48034, actions_model.StatusSkipped, 1)
+		assertJob(t, 48035, actions_model.StatusSkipped, 1)
+		assertJob(t, 48036, actions_model.StatusCancelled, 1)
+		assertJob(t, 48037, actions_model.StatusFailure, 1)
+		assertJob(t, 48038, actions_model.StatusSkipped, 1)
+		assertJob(t, 48039, actions_model.StatusSkipped, 1)
+	}
+
+	t.Run("Failed jobs and their dependents are rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunFailedJobs")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		assertFailedRunUntouched(t)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/35031/rerun-failed-jobs", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNoContent)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35031})
+		assert.Equal(t, actions_model.StatusWaiting, run.Status)
+		assert.EqualValues(t, 0, run.Started)
+		assert.EqualValues(t, 0, run.Stopped)
+
+		// The successful job that is not needed by any rerun job is left alone.
+		assertJob(t, 48031, actions_model.StatusSuccess, 1)
+		// A failed job whose needs are met by jobs that are not rerun has to start waiting, not blocked.
+		assertJob(t, 48032, actions_model.StatusWaiting, 2)
+		assertJob(t, 48033, actions_model.StatusWaiting, 2)
+		// A transitive dependent declared before the job it depends on is rerun, too.
+		assertJob(t, 48034, actions_model.StatusBlocked, 2)
+		assertJob(t, 48035, actions_model.StatusBlocked, 2)
+		assertJob(t, 48036, actions_model.StatusWaiting, 2)
+		// A failed job that depends on another failed job has to wait for it.
+		assertJob(t, 48037, actions_model.StatusBlocked, 2)
+		// All expansions of a dependent matrix job are rerun.
+		assertJob(t, 48038, actions_model.StatusBlocked, 2)
+		assertJob(t, 48039, actions_model.StatusBlocked, 2)
+	})
+
+	t.Run("Still running run cannot be rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunFailedJobs")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/35032/rerun-failed-jobs", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusBadRequest)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35032})
+		assert.Equal(t, actions_model.StatusRunning, run.Status)
+		assertJob(t, 48043, actions_model.StatusRunning, 1)
+	})
+
+	t.Run("Run without failed jobs cannot be rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunFailedJobs")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/35033/rerun-failed-jobs", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusBadRequest)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35033})
+		assert.Equal(t, actions_model.StatusSuccess, run.Status)
+		assertJob(t, 48044, actions_model.StatusSuccess, 1)
+	})
+
+	t.Run("Not found if run does not belong to repository", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunFailedJobs")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo62 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 62, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/35031/rerun-failed-jobs", repo62.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+
+		assertFailedRunUntouched(t)
+	})
+
+	t.Run("Not found if run does not exist", func(t *testing.T) {
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		unittest.AssertNotExistsBean(t, &actions_model.ActionRun{ID: 260871})
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/260871/rerun-failed-jobs", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+	})
+
+	t.Run("Rerun of failed jobs requires write token", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunFailedJobs")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		readToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeReadRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/runs/35031/rerun-failed-jobs", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(readToken)
+		response := MakeRequest(t, request, http.StatusForbidden)
+
+		type errorResponse struct {
+			Message string `json:"message"`
+		}
+
+		var errorMessage *errorResponse
+		DecodeJSON(t, response, &errorMessage)
+
+		assert.Equal(t, "token does not have at least one of required scope(s): [write:repository]", errorMessage.Message)
+
+		assertFailedRunUntouched(t)
+	})
+}
+
+func TestActionsAPIRerunActionJob(t *testing.T) {
+	assertJob := func(t *testing.T, jobID int64, status actions_model.Status, attempt int64) {
+		t.Helper()
+
+		job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: jobID})
+		assert.Equal(t, status, job.Status, "status of job %d", jobID)
+		assert.EqualValues(t, attempt, job.Attempt, "attempt of job %d", jobID)
+	}
+
+	assertFailedRunUntouched := func(t *testing.T) {
+		t.Helper()
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35041})
+		assert.Equal(t, actions_model.StatusFailure, run.Status)
+
+		assertJob(t, 48041, actions_model.StatusFailure, 1)
+		assertJob(t, 48042, actions_model.StatusSuccess, 1)
+	}
+
+	t.Run("Job and its dependents are rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionJob")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		assertFailedRunUntouched(t)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/jobs/48041/rerun", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNoContent)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35041})
+		assert.Equal(t, actions_model.StatusWaiting, run.Status)
+
+		// The requested job always starts waiting, its dependent has to wait for it.
+		assertJob(t, 48041, actions_model.StatusWaiting, 2)
+		assertJob(t, 48042, actions_model.StatusBlocked, 2)
+	})
+
+	t.Run("Still running job cannot be rerun", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionJob")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/jobs/48043/rerun", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusBadRequest)
+
+		run := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRun{ID: 35042})
+		assert.Equal(t, actions_model.StatusRunning, run.Status)
+		assertJob(t, 48043, actions_model.StatusRunning, 1)
+	})
+
+	t.Run("Not found if job does not belong to repository", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionJob")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo62 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 62, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/jobs/48041/rerun", repo62.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+
+		assertFailedRunUntouched(t)
+	})
+
+	t.Run("Not found if job does not exist", func(t *testing.T) {
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		writeToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository)
+
+		unittest.AssertNotExistsBean(t, &actions_model.ActionRunJob{ID: 260871})
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/jobs/260871/rerun", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(writeToken)
+		MakeRequest(t, request, http.StatusNotFound)
+	})
+
+	t.Run("Job rerun requires write token", func(t *testing.T) {
+		defer unittest.OverrideFixtures("tests/integration/fixtures/TestActionsAPIRerunActionJob")()
+		defer tests.PrepareTestEnv(t)()
+
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		repo1 := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1, OwnerID: user2.ID})
+		session := loginUser(t, user2.Name)
+		readToken := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeReadRepository)
+
+		requestURL := fmt.Sprintf("/api/v1/repos/%s/actions/jobs/48041/rerun", repo1.FullName())
+		request := NewRequest(t, "POST", requestURL)
+		request.AddTokenAuth(readToken)
+		response := MakeRequest(t, request, http.StatusForbidden)
+
+		type errorResponse struct {
+			Message string `json:"message"`
+		}
+
+		var errorMessage *errorResponse
+		DecodeJSON(t, response, &errorMessage)
+
+		assert.Equal(t, "token does not have at least one of required scope(s): [write:repository]", errorMessage.Message)
+
+		assertFailedRunUntouched(t)
+	})
+}
+
 func TestActionsAPIListActionRunJobs(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 
