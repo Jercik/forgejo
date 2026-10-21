@@ -152,6 +152,69 @@ func TestAPIPullReviewCreateDeleteComment(t *testing.T) {
 	}
 }
 
+func TestAPIPullReviewActionsUserPendingIsolation(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	pullIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 3})
+	require.NoError(t, pullIssue.LoadAttributes(db.DefaultContext))
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: pullIssue.RepoID})
+	humanReview := unittest.AssertExistsAndLoadBean(t, &issues_model.Review{ID: 6})
+	require.Equal(t, issues_model.ReviewTypePending, humanReview.Type)
+	require.Positive(t, humanReview.ReviewerID)
+
+	actionsContext := NewActionsUserTestContext(t, repo.OwnerName, repo.Name)
+	reviewsURL := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews", repo.OwnerName, repo.Name, pullIssue.Index)
+
+	// The Actions user cannot read another reviewer's pending review directly.
+	req := NewRequestf(t, http.MethodGet, "%s/%d", reviewsURL, humanReview.ID).
+		AddTokenAuth(actionsContext.Token)
+	actionsContext.Session.MakeRequest(t, req, http.StatusNotFound)
+
+	// Creating a pending Actions review must allocate a distinct review and
+	// attach the code comment there, not append it to the older human review.
+	var actionsReview api.PullReview
+	req = NewRequestWithJSON(t, http.MethodPost, reviewsURL, &api.CreatePullReviewOptions{
+		Body: "Actions pending review",
+		Comments: []api.CreatePullReviewComment{
+			{
+				Path:       "README.md",
+				Body:       "Actions code comment",
+				NewLineNum: 1,
+			},
+		},
+	}).AddTokenAuth(actionsContext.Token)
+	resp := actionsContext.Session.MakeRequest(t, req, http.StatusOK)
+	DecodeJSON(t, resp, &actionsReview)
+	require.NotEqual(t, humanReview.ID, actionsReview.ID)
+	assert.EqualValues(t, user_model.ActionsUserID, actionsReview.Reviewer.ID)
+	assert.Equal(t, api.ReviewStatePending, actionsReview.State)
+	assert.Equal(t, 1, actionsReview.CodeCommentsCount)
+
+	// Submitting the review must select that Actions-owned pending review.
+	req = NewRequestWithJSON(t, http.MethodPost, fmt.Sprintf("%s/%d", reviewsURL, actionsReview.ID), &api.SubmitPullReviewOptions{
+		Event: api.ReviewStateComment,
+		Body:  "Actions submitted review",
+	}).AddTokenAuth(actionsContext.Token)
+	resp = actionsContext.Session.MakeRequest(t, req, http.StatusOK)
+	var submittedReview api.PullReview
+	DecodeJSON(t, resp, &submittedReview)
+	assert.Equal(t, actionsReview.ID, submittedReview.ID)
+	assert.EqualValues(t, user_model.ActionsUserID, submittedReview.Reviewer.ID)
+	assert.Equal(t, api.ReviewStateComment, submittedReview.State)
+
+	// The human review remains pending and receives no Actions comments.
+	humanReview = unittest.AssertExistsAndLoadBean(t, &issues_model.Review{ID: humanReview.ID})
+	assert.Equal(t, issues_model.ReviewTypePending, humanReview.Type)
+	assert.Equal(t, "New review 3", humanReview.Content)
+	require.NoError(t, humanReview.LoadCodeComments(db.DefaultContext))
+	assert.Empty(t, humanReview.CodeComments)
+
+	persistedActionsReview := unittest.AssertExistsAndLoadBean(t, &issues_model.Review{ID: actionsReview.ID})
+	assert.Equal(t, int64(user_model.ActionsUserID), persistedActionsReview.ReviewerID)
+	assert.Equal(t, issues_model.ReviewTypeComment, persistedActionsReview.Type)
+	require.NoError(t, persistedActionsReview.LoadCodeComments(db.DefaultContext))
+	assert.Len(t, persistedActionsReview.CodeComments, 1)
+}
+
 func TestAPIPullReviewMultiLineComment(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 	pullIssue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 3})
