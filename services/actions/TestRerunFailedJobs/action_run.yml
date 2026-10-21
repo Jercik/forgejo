@@ -1,0 +1,59 @@
+- id: 455720
+  title: Failed workflow run with several failed jobs
+  repo_id: 62 # test_workflows
+  owner_id: 2 # user2
+  workflow_id: failed.yaml
+  workflow_directory: .forgejo/workflows
+  index: 120
+  trigger_user_id: 2
+  ref: refs/heads/main
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  event: push
+  event_payload: "{}"
+  status: 2 # failure
+  version: 2
+  started: 1776279254
+  stopped: 1776279265
+  previous_duration: 0
+  created: 1776279254
+  updated: 1776279265
+
+- id: 455730
+  title: Failed workflow run with a still running dependent job
+  repo_id: 62 # test_workflows
+  owner_id: 2 # user2
+  workflow_id: always.yaml
+  workflow_directory: .forgejo/workflows
+  index: 121
+  trigger_user_id: 2
+  ref: refs/heads/main
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  event: push
+  event_payload: "{}"
+  status: 2 # failure
+  version: 2
+  started: 1776279254
+  stopped: 1776279265
+  previous_duration: 0
+  created: 1776279254
+  updated: 1776279265
+
+- id: 455740
+  title: Successful workflow run
+  repo_id: 62 # test_workflows
+  owner_id: 2 # user2
+  workflow_id: success.yaml
+  workflow_directory: .forgejo/workflows
+  index: 122
+  trigger_user_id: 2
+  ref: refs/heads/main
+  commit_sha: e36900942550acf94ddd8c0a3b91cc0165b4bd02
+  event: push
+  event_payload: "{}"
+  status: 1 # success
+  version: 2
+  started: 1776279254
+  stopped: 1776279265
+  previous_duration: 0
+  created: 1776279254
+  updated: 1776279265
