@@ -1,0 +1,676 @@
+# Rule: Read the Startup Files First
+
+Before taking any action, read @README.md.
+
+# Rule: Execute Commands from Arrays, Not Strings
+
+## Store commands in arrays, not strings
+
+When Bash expands a string variable, quotes inside become literal characters and whitespace triggers word splitting:
+
+```bash
+# BAD
+CMD="echo \"hello world\""
+$CMD  # outputs: "hello world" (with literal quotes)
+
+# GOOD: array preserves argument boundaries
+CMD=(echo "hello world")
+"${CMD[@]}"  # outputs: hello world
+```
+
+## Never interpolate variables into shell strings
+
+Variables interpolated into shell strings — `sh -c`, `bash -c`, `eval`, `ssh host` — are reparsed by the shell. Characters like `$(...)`, backticks, or `;` in the value execute as code — an injection vector:
+
+```bash
+# BAD: if VAR contains $(malicious), it executes
+sh -c "$VAR --write"
+
+# GOOD: direct execution, no shell interpretation
+"${CMD[@]}" --write
+
+# GOOD: with xargs, execute the array directly
+find . -name '*.js' -print0 | xargs -0 "${CMD[@]}" --write --
+```
+
+When you need shell features (pipes, redirects), use the `exec "$@"` pattern to pass arguments as positional parameters instead of interpolating them:
+
+```bash
+# GOOD: arguments passed as $@, not interpolated into the string; the redirect is why sh -c is needed
+find . -name '*.js' -print0 | xargs -0 sh -c 'exec "$@" >> format.log 2>&1' _ "${CMD[@]}" --write --
+```
+
+The `_` occupies `$0` (the script name), leaving `$@` for the command and arguments.
+
+# Rule: Prefer Debian Slim Over Alpine Base Images
+
+Use `-slim` Debian variants (e.g. `node:26-bookworm-slim`, `python:3.12-slim-bookworm`) as container base images — Alpine's musl libc breaks glibc prebuilt binaries and forces native-module rebuilds, and the base-image size savings become marginal once app dependencies land.
+
+# Rule: Set the Container UID in the Orchestrator, Not the Image
+
+Do not create users inside container images. Let the orchestrator (Podman Quadlet, Kubernetes, docker-compose) specify the non-root UID and GID the container runs as. An image-local account, or a write path only that account's UID can write, couples the image to that UID: OpenShift's restricted SCC or a Gatekeeper UID-range policy can require arbitrary UIDs, and an orchestrator-assigned UID that differs from the image's causes volume-ownership conflicts Podman papers over with the non-portable `:U` volume flag.
+
+`USER` supplies the default UID and GID, and `HOME` through the image's passwd unless the image sets `ENV HOME`. `--user`, `User=`, and `runAsUser` override it; Podman's `UserNS=keep-id` does not (Podman 5.4).
+
+```dockerfile
+# BAD: the account exists only in this image, and the container inherits its UID, GID, and HOME
+RUN groupadd -r myapp && useradd -r -g myapp myapp
+USER myapp
+```
+
+Minting a new account is the prohibited act, not running as one the base image already ships. Write the runtime stage without a `USER` instruction when every launcher of the image sets a non-zero UID: each unit, compose service, CI run, and documented run command, whether in this repository or named by evidence elsewhere, such as a Containerfile comment naming the deploying unit. `UserNS=` alone, a root UID, and a variable that may be unset do not count.
+
+The orchestrator's override reaches only the running container: a `USER` also applies to every later `RUN` step in its stage. Where build steps must run unprivileged, put a `USER` before them, set to the numeric UID of an account the base image already ships; those steps run under that account, and the orchestrator still overrides it at container start.
+
+## Never let the fallback be root
+
+An image deployed by a bare `podman run` or `docker run` has no orchestrator to assign anything, so dropping `USER` starts it as root. Unless the omit-`USER` condition above holds, keep a `USER` set to the numeric UID of an unprivileged account the base image already ships (`node`, `nginx`, `postgres`), looking up the UID in the base image. In a base image with no accounts (`FROM scratch`), set `USER` to a numeric non-zero UID without adding a passwd entry, set `ENV HOME`, and give writable paths to that UID and group 0, with group 0 getting the owner's permissions.
+
+```dockerfile
+# GOOD: no account is created; node (UID 1000) ships with the base image
+USER 1000
+```
+
+## Runtime writes
+
+Send runtime writes to orchestrator-provided volumes or tmpfs (`Volume=`, `Tmpfs=`, `emptyDir`), which also works with a read-only root filesystem (`ReadOnly=true`, `readOnlyRootFilesystem`). A new named volume copies the owner and mode of the image directory at its mount point; where the image has none, Podman chowns it to the container user and Docker leaves it root-owned. For a Docker named volume, create its mount point in the image and give it the same owner and mode (`chown -R 1000:0` and `chmod -R g=u`, as in the snippet below), whether or not the root filesystem is writable. Docker copies that owner into an empty volume when it mounts it; a volume that already holds data keeps its owner, so recreate it or `chown` it once. Only when the process must write to an image path and the root filesystem is writable, `chown` that path to the UID the fallback `USER` names and to group 0, and give group 0 the owner's permissions (`chmod g=u`), before the `USER` line, as in the snippet below. In either recipe, skip `chmod g=u` on a directory the app requires to be owner-only and create it with mode 700 (`install -d -o 1000 -g 0 -m 700`); only its owning UID can write it, so the orchestrator must run the process as that UID. OpenShift runs get group 0, as do UID-only runs (`--user 1136`, `runAsUser` without `runAsGroup`) whose UID is not in the image's passwd. A bind mount hides the image's copy of the directory it covers, so build-time ownership never reaches it. With Docker or rootful Podman, give a bind-mounted host path the container UID as its host owner, unless UID remapping is on (Docker's daemon `userns-remap`, Podman's `--userns=auto`); rootless Podman is covered below.
+
+```dockerfile
+RUN mkdir -p /result && chown -R 1000:0 /result && chmod -R g=u /result
+USER 1000
+```
+
+An orchestrator that also sets a GID (`Group=1100`, `runAsGroup`) replaces group 0; grant it with `GroupAdd=0`, compose `group_add: ["0"]`, or `supplementalGroups: [0]`, or use tmpfs or `emptyDir`.
+
+## Orchestrator configuration
+
+Podman Quadlet:
+
+```ini
+[Container]
+User=1100
+Group=1100
+ReadOnly=true
+Tmpfs=/tmp
+Volume=/var/lib/myapp:/data:rw
+```
+
+Kubernetes sets the UID and GID through the pod-level `securityContext` (`runAsUser`, `runAsGroup`). `runAsNonRoot` only makes the kubelet refuse a container whose UID is zero or cannot be verified as non-zero (a named `USER` without `runAsUser`, which is why the fallback `USER` is numeric). `fsGroup` adds a supplementary group to every process and, on volume types that support it (not `hostPath`), sets that group and setgid on the volume; it leaves image paths alone. docker-compose uses `user: "1100:1100"`.
+
+On the host, create the user and group with the same deterministic UID/GID the orchestrator specifies (`ansible.builtin.user`/`group` with explicit `uid:`/`gid:`), and for rootful Podman give bind-mounted data directories that owner. Rootless Podman maps host IDs through a user namespace, so under the default mapping use a named volume or `podman unshare chown` instead. Under `UserNS=keep-id` the process runs as the host user unless the image's `USER` or `User=` names another UID. When it is the host user, leave the bind-mounted host directory owned by that user, because `podman unshare chown` would take it away. For another UID, map the host user to that UID and GID with `UserNS=keep-id:uid=<UID>,gid=<GID>`; `podman unshare chown` uses a different mapping below the host UID and picks the wrong host ID (verified on Podman 5.4).
+
+# Rule: Avoid Leaky Abstractions
+
+Design interfaces around what callers need, not how the system works internally. An abstraction is leaky when using it correctly requires knowledge of underlying storage, infrastructure, or error behavior — a connection string in a method signature, a transaction handle in a return type, an error that only makes sense one layer down, or two similar-looking methods where one reads memory and the other crosses the network. Keep signatures consistent, return domain types instead of backend artifacts, and inject infrastructure dependencies through constructors rather than method parameters.
+
+```ts
+// Leaky: exposes database concerns, inconsistent signatures
+interface ReservationRepository {
+  create(restaurantId: number, reservation: Reservation): number; // returns DB ID
+  findById(id: string): Reservation | null; // why no restaurantId?
+  update(reservation: Reservation): void;
+  connect(connectionString: string): void;
+}
+```
+
+```ts
+// Better: consistent interface, infrastructure hidden, injected via constructor
+interface ReservationRepository {
+  create(restaurantId: number, draft: NewReservation): Promise<Reservation>;
+  findById(restaurantId: number, id: string): Promise<Reservation | null>;
+  update(restaurantId: number, reservation: Reservation): Promise<void>;
+}
+```
+
+# Rule: Build for Requirements That Exist Today
+
+Implement what the current requirement needs, nothing more. Speculative surface must be maintained, tested, and reasoned about until someone deletes it — and because the code that carries it references it, no unused-code tool will ever flag it; only authoring discipline stops it.
+
+- No defensive handling for states the types already exclude: the null-check on a non-nullable value, the `catch` around code that cannot throw. Exhaustiveness guards (`assertNever`, `satisfies never`) are the opposite shape — they make an impossible state fail loudly instead of flowing on — and they stay.
+- No parameter or option no caller passes — including one a default keeps compiling, like a `{ retries = 3 }` read in the body that every call site leaves at 3. A published CLI or library's callers are external: its documented public interface is a current requirement, never speculative surface.
+- No abstraction justified only by a hypothetical second use: an interface with one implementation that hides nothing, a registry with one entry, indirection added "for flexibility". Extracting a single-use pure function into the functional core is not this — the extraction pays now, in testability, and the functional-core and file-naming rules ask for it.
+- No generality justified only by a future requirement — when the requirement arrives, designing for the real case beats having guessed. The one inversion is a format that locks at its first real reader (a wire format, a stored blob, a published API shape): a locked, versionless format is the one guess that cannot be cheaply corrected, so design its evolution path — a `version` field — up front.
+
+# Rule: Comments Explain Why, Not What
+
+Default to writing no comments. Add one only to capture what the code cannot show — a hidden constraint, a subtle invariant, why a decision was made, which alternatives were rejected, what external factor forced a workaround — the context that stops the next person from "cleaning up" something load-bearing.
+
+Never explain what the code does. Names convey purpose, types convey shape, the code itself conveys behavior. Never reference the current task, fix, or callers ("used by X", "added for the Y flow", "handles the case from issue #123") — those belong in the PR description and rot as the codebase evolves.
+
+Keep the comments you write — docstrings included — as short as the reason they record allows, usually one line; an example snippet already living in a docstring is documentation to keep type-checking, not a comment to trim.
+
+```ts
+// BAD: references caller context that will rot
+// Used by the checkout flow after the Stripe webhook fires
+function markOrderPaid(orderId: string): void {
+  /* ... */
+}
+
+// GOOD: records a non-obvious external constraint
+// Stripe caps statement descriptors at 22 chars
+const statementDescriptor = raw.slice(0, 22);
+```
+
+# Rule: Prefer Deep Modules
+
+A module earns its place by what it hides behind an interface smaller than the implementation it covers: a decision, a side effect, a detail callers no longer carry. Judge every extraction and every layer by that ratio of interface to implementation. The deletion test settles close calls: if removing the module would scatter the same knowledge across its callers, it is earning its keep; if the complexity would simply vanish, it is a pass-through.
+
+- Never split a function or file because it is long; split for what the split hides or separates — a decision the caller need not know, a side effect kept out of the functional core.
+- If understanding a caller requires repeatedly reading a callee's body, that boundary hides nothing: inline it or redesign the interface.
+- A wrapper that only forwards calls adds surface without hiding anything; use the wrapped thing directly. An interface that hides infrastructure behind domain-shaped methods is the opposite case — that is depth.
+- In production code, one general operation serving all current callers beats several near-duplicate special-case ones.
+
+# Rule: Design Contracts Twice
+
+The shape that ships first is usually just the first one that worked, and some shapes are expensive to revisit once anything depends on them: a CLI surface, a stored or wire format, JSON output that automation parses, a package's public API. Before committing to such a contract, sketch a second, meaningfully different shape and compare the two on what each asks of callers: what they must know to use it correctly, and what they can get wrong silently. Prefer the shape that keeps required knowledge small while misuse stays loud — still failing a compile, a parse, or a run. Record the winner and the loser in a sentence or two where rejected alternatives already belong — the pull request description, or a one-line comment when the code alone would not explain the choice.
+
+Skip the sketch when the shape is dictated rather than chosen — a schema mirroring a format some other producer defines, or a surface an existing convention already fixes.
+
+# Rule: File Naming Matches Contents
+
+Name files for what the module does: verb-noun or domain-role names, matching the primary export — `calculateUsageRate` goes in `calculate-usage-rate.ts`. Use kebab-case in TypeScript and JavaScript; in other languages, match the repository's existing files of the same kind. Wherever a toolchain reads meaning into a name, its convention wins: Go's `_test.go` and `_linux.go` suffixes, pytest's default `test_*.py` pattern, and Rust and Python modules imported by name, which must be identifiers.
+
+## Checklist
+
+- One responsibility per file; if the name needs two verbs, split it.
+- Align with functional core/imperative shell conventions:
+  - Functional core: `calculate-…`, `validate-…`, `parse-…`, `format-…`, `aggregate-…`
+  - Imperative shell: `…-route.ts`, `…-handler.ts`, `…-job.ts`, `…-cli.ts`, `…-script.ts`
+- Prefer specific domain nouns; avoid generic bucket file names like `utils`, `helpers`, `core`, `data`, `math`.
+- Use role suffixes (`-service`, `-repository`) only when they clarify architecture.
+
+Example: A file named `usage.core.ts` containing both fetching and aggregation logic should be split into `fetch-service-usage.ts` and `aggregate-usage.ts`.
+
+# Rule: Separate the Functional Core from the Imperative Shell
+
+Separate business logic from side effects by organizing code into a functional core and an imperative shell. The functional core contains pure functions that operate only on provided data, free of I/O, database calls, or state mutations. The imperative shell handles all side effects and orchestrates the core.
+
+The payoff: the shell can change — a different database, queue, or framework — without touching business rules, and core functions work in any context. When unsure where a function belongs, ask what its test would need: a mock, a database, or a clock means shell; plain values mean core.
+
+**Functional core:** filtering, mapping, calculations, validation, parsing, formatting, business rule evaluation.
+
+**Imperative shell:** HTTP handlers, database queries, file I/O, API calls, message queue operations, CLI entry points.
+
+```ts
+// BAD: Logic and side effects mixed
+function sendUserExpiryEmail(): void {
+  for (const user of db.getUsers()) {
+    if (user.subscriptionEndDate > new Date()) continue;
+    if (user.isFreeTrial) continue;
+    email.send(user.email, `Your account has expired, ${user.name}.`);
+  }
+}
+
+// GOOD: Functional core (pure, testable)
+function getExpiredUsers(users: User[], cutoff: Date): User[] {
+  return users.filter((user) => user.subscriptionEndDate <= cutoff && !user.isFreeTrial);
+}
+
+function generateExpiryEmails(users: User[]): Array<[string, string]> {
+  return users.map((user) => [user.email, `Your account has expired, ${user.name}.`]);
+}
+
+// Imperative shell (orchestrates side effects)
+email.bulkSend(generateExpiryEmails(getExpiredUsers(db.getUsers(), new Date())));
+```
+
+The split pays off in tests: core tests are fast, deterministic, and need no mocks, and the shell becomes thin orchestration where bugs are easy to spot through review. Which tests to write, for the core and the shell alike, is governed by the Test What Matters rule.
+
+# Rule: No Logic in Tests
+
+Write test assertions as concrete input/output examples, not computed values — unlike production code that handles varied inputs, tests verify specific cases. Avoid operators, string concatenation, loops, and conditionals in test bodies — these obscure bugs. Two shapes are not this logic: a table of literal cases the framework reports one by one — `it.each`, pytest's `parametrize`, a loop over Go's `t.Run` or Python's `self.subTest` — and a comparison that is itself the assertion, such as pytest's `assert slug == "a-b"` or a Go `if` whose body only fails the test (`if got != want { t.Errorf(…) }`, `if err != nil { t.Fatal(err) }`).
+
+```ts
+const baseUrl = "http://example.com/";
+
+// BAD: computed expectation hides bugs when test and production share the same error
+expect(getPhotosUrl()).toBe(baseUrl + "/photos"); // passes despite double-slash bug
+
+// GOOD: literal expected value catches the bug immediately
+expect(getPhotosUrl()).toBe("http://example.com/photos"); // fails, reveals the issue
+```
+
+Use test utilities for setup and data preparation — fixtures, builders, factories, mock configuration — but never for computing expected values.
+
+# Rule: Parse, Don't Validate
+
+When checking input data, return a refined type that preserves the knowledge gained — don't just validate and discard. Validation functions that return `void` or a bare `boolean` force callers to re-check conditions or handle "impossible" cases the compiler could rule out — and a check whose result nothing consumes is easy to forget entirely.
+
+Parse external input — JSON, environment variables, API responses — into domain types at the system boundary. In TypeScript, use Zod: every schema is a parser from `unknown` input to a typed output.
+
+```ts
+import * as z from "zod";
+
+// Schema defines both validation rules AND the resulting type
+const User = z.object({
+  id: z.string(),
+  email: z.email(),
+  roles: z.array(z.string()).min(1),
+});
+
+type User = z.infer<typeof User>;
+
+// Parse at the boundary — downstream code receives typed data
+function handleRequest(body: unknown): User {
+  return User.parse(body); // throws ZodError if invalid
+}
+```
+
+- **Strengthen argument types.** Instead of accepting `T | undefined`, require callers to provide already-parsed data.
+- **Let schemas encode constraints.** If a function needs a non-empty array, positive number, or valid email, define a schema that guarantees it.
+
+# Rule: Test What Matters
+
+Write tests where failure is expensive and the test can stay stable: business rules, data transformations, the functional core's public contracts, and a regression test for every bug you fix, shell code included, unless the compiler would reject the bug if it came back. Beyond those regression tests, leave the imperative shell — CLI entry points, HTTP handlers, database and file I/O — untested unless tests are requested; when they are, prefer a thin set of end-to-end flows over unit tests with mocks. Write fewer for pass-through forwarding, private helpers already covered through a public caller, call-count and call-order choreography, wholesale snapshots, and any test whose assertions mirror the implementation instead of the promised behavior.
+
+```ts
+// BAD: asserts internal choreography, not the promised behavior
+it("saves the order via the repository", async () => {
+  const repo = { save: vi.fn() };
+  await createOrder({ repo }, { sku: "A1", qty: 2 });
+  expect(repo.save).toHaveBeenCalledTimes(1);
+});
+
+// GOOD: asserts the business rule — what the caller was promised
+it("applies the bulk discount at qty 10", () => {
+  expect(totalFor([{ sku: "A1", qty: 10 }])).toBe(85);
+});
+```
+
+A good test survives a behavior-preserving refactor; one that must change with it is pinned to the wrong thing.
+
+# Rule: Follow Upstream Conventions in Upstream Code
+
+This repository is a fork: its `upstream` git remote names the project it tracks. Code in upstream's tree — files that exist upstream and new files you add to its packages — follows upstream's code conventions over this file's coding rules: file names, comments, error handling, module and type structure, test shape, changelog entries. That keeps fork changes rebasing cleanly onto upstream and ready to propose there. Rules about how you work, such as startup reads, verification, and tool usage, still apply everywhere. Files only the fork needs — its own tooling, CI, and fork documentation such as `UPSTREAMING.md` — follow this file's coding rules.
+
+# Rule: No Changelogs in Your Own Code
+
+Create no changelog or release-notes files (`CHANGELOG.md`, `RELEASE_NOTES.md`, `.changeset/`, `changelog.d/`) and write no changelog entries: the commit message and pull request description carry the history of a change.
+
+When you find an existing one in the repository's own code, move any standing facts it still carries into the package's current documentation in present tense, then delete it. Standing facts are things like upgrade order or rollback limits for versions still in use.
+
+Forks of upstream projects and vendored third-party code keep upstream's convention.
+
+# Rule: Use `repoq` for Repository Queries
+
+Use `repoq` for reading repository state instead of piping `git` or the forge CLI through `awk`/`jq`/`grep`. Each command handles edge cases (detached HEAD, unborn branches, missing auth) and, under `--json`, returns validated JSON. It also carries one write verb: `pr create` opens a pull request on the detected forge, taking the body from a file or stdin rather than an argument the shell would expand. Use raw `git` for commit/push/merge, and the repo's forge CLI for the other forge-side mutations (issues, releases, PR edits) — `gh` for GitHub or `fgj` for Forgejo, per the detected provider. Run `npx -y repoq@latest --help` if unsure of the available subcommands; the explicit tag prevents `npx` from reusing a stale cached release.
+
+# Rule: Expose Component Variants Through Scoped CSS Variables
+
+Expose component variants through scoped CSS custom properties rather than conditional class generation. Define variables with arbitrary property syntax (`[--btn-bg:value]`) and consume them with Tailwind's parentheses syntax (`bg-(--btn-bg)`). Map variant props to variable assignments while keeping structural styles constant.
+
+Consumers can override the variables via inline `style` — an inline declaration outranks the class-assigned value, while a parent-context value loses to the element's own variant assignment.
+
+Prefer CSS custom properties when values change at runtime (themes, animations), are reused across multiple utilities in a component, or need to be inherited by nested elements. Keep regular Tailwind utilities for breakpoints, one-off styles, and static values.
+
+```tsx
+import type { ReactNode } from "react";
+import { tv } from "tailwind-variants";
+
+const button = tv({
+  // structure references the variables; children inherit them
+  base: "bg-(--btn-bg) text-white *:data-[slot=icon]:text-(--btn-icon)",
+  variants: {
+    // variants only assign the values
+    color: {
+      blue: "[--btn-bg:var(--color-blue-600)] [--btn-icon:var(--color-blue-300)]",
+      red: "[--btn-bg:var(--color-red-600)] [--btn-icon:var(--color-red-300)]",
+    },
+  },
+  defaultVariants: { color: "blue" },
+});
+
+export function Button({ color, children }: { color?: "blue" | "red"; children: ReactNode }) {
+  return <button className={button({ color })}>{children}</button>;
+}
+```
+
+# Rule: Layer Effects with `before:` and `after:`, Not Extra DOM
+
+Use `before:` and `after:` variants for layered effects (optical borders, overlays, focus rings) without extra DOM. The pieces:
+
+- `absolute` on the pseudo-element, with the parent `relative` (or otherwise positioned) — an unpositioned parent leaves the layer sizing and placing itself against the viewport instead of the element
+- `-z-10` plus `isolate` on the parent to sit behind the element's content while staying above its own background — without a stacking context on the parent, a negative z-index drops the layer behind the parent's background, where it disappears
+- `pointer-events-none` when the layer shouldn't intercept clicks
+- a `content-[…]` utility only when the layer must carry text — every `before:`/`after:` utility already emits `content: var(--tw-content)`, which defaults to the empty string, so a decorative layer renders without one
+
+Combine with state variants (`hover:after:`, `focus-within:before:`) for interactive effects.
+
+```tsx
+// Layered button with optical border and hover overlay
+<button className="relative isolate rounded-lg border-4 border-transparent bg-(--btn-border)
+  before:absolute before:inset-0 before:-z-10 before:rounded-lg before:bg-(--btn-bg)
+  after:absolute after:inset-0 after:-z-10 after:shadow-[inset_0_1px_theme(--color-white/15%)]
+  hover:after:bg-(--btn-hover-overlay)" />
+```
+
+# Rule: Scope Descendant `z-*` with `isolate`
+
+Apply `isolate` to a container whose descendants use explicit `z-*` classes for layers local to the component. This creates a stacking context: the descendants are ordered only among themselves, and the whole subtree competes with outside elements at the container's own level. The tradeoff is that the container's own level then decides everything — an outside positioned element at a higher `z-index`, or at the same level but later in the markup, paints over the entire container, `z-20` descendants included. Combine with `relative` when the container is also a positioning anchor.
+
+A full-viewport overlay is the exception: a backdrop has to outrank the page, so it must not sit inside an isolated container — render it at the top level (or through a portal), where its z-index still competes globally.
+
+Other ways to open a stacking context cost something: a transform utility (`rotate-*`, `scale-*`, `translate-*`) also makes the box the containing block for `fixed` and `absolute` descendants, and `opacity` below 1 makes the whole subtree translucent. `isolate` moves and restyles nothing — the one thing it changes is blending: a descendant's `mix-blend-mode` then composites only within the container, never against what sits behind it.
+
+```tsx
+// The badge's z-10 competes only inside the card
+<div className="relative isolate">
+  <img className="relative z-0" src="/cover.jpg" alt="" />
+  <span className="absolute top-2 right-2 z-10">New</span>
+</div>
+```
+
+# Rule: Use `data-slot` for Sub-Component Styling
+
+Use `data-slot` attributes to mark internal component elements for parent-based styling. This avoids className prop drilling (e.g. `labelClassName`) while maintaining clear component boundaries.
+
+Apply this pattern when components pass style-related props to children (`hasIcon`, `showLabel`), have conditional className logic based on children, or need coordinated styling across label/input/error elements. Reserve it for internal component styling; external customization should still use className props.
+
+Target slots from the parent:
+
+- Direct child: `*:data-[slot=icon]:shrink-0` (`**:` for any descendant)
+- Sibling spacing: `[&>[data-slot=label]+[data-slot=control]]:mt-2`
+- Conditional via `:has()`: `[&:has([data-slot=error])_[data-slot=label]]:text-red-500`
+
+Relational selectors like the last two have no canonical native form — `npx @tailwindcss/cli canonicalize` rewrites child/descendant selectors to the shorthands and leaves these in the arbitrary `[&…]` form.
+
+Name slots by purpose (`icon`, `label`, `control`, `error`), not style (`left`, `red`).
+
+```tsx
+import type { ReactNode } from "react";
+
+// Field container that styles its children based on slots
+export function Field({ children }: { children: ReactNode }) {
+  return (
+    <div className="[&>[data-slot=label]+[data-slot=control]]:mt-2 **:data-[slot=error]:text-red-500">
+      {children}
+    </div>
+  );
+}
+
+// Usage:
+<Field>
+  <label data-slot="label">Email</label>
+  <input data-slot="control" type="email" />
+  <span data-slot="error">Invalid email</span>
+</Field>;
+```
+
+# Rule: Discriminated Unions, Not Bags of Optionals
+
+Use discriminated unions to model data that can be in one of several distinct shapes. Prefer them over a "bag of optionals" — optional properties allow impossible states that the type system should prevent.
+
+```ts
+// BAD - allows impossible states like { status: "idle", data: someData }
+type FetchingState<TData> = {
+  status: "idle" | "loading" | "success" | "error";
+  data?: TData;
+  error?: Error;
+};
+
+// GOOD - each state carries only its valid properties
+type FetchingState<TData> =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "success"; data: TData }
+  | { status: "error"; error: Error };
+```
+
+Boolean mode flags are the same smell: two or more interdependent booleans model more states than exist. Collapse the interdependent flags — and only those — into one discriminant.
+
+```ts
+// BAD - creating and editing cannot both hold, and documentId means nothing outside editing
+type EditorState = { isCreating: boolean; isEditing: boolean; documentId?: string };
+
+// GOOD - three valid states, each carrying only its own data
+type EditorState =
+  | { mode: "closed" }
+  | { mode: "creating" }
+  | { mode: "editing"; documentId: string };
+```
+
+Two shapes look like this smell but are not: booleans recording independent observations of external systems (a tag probed in git, a version probed in a registry) stay separate, because the "impossible" combination there is drift the code must represent to detect it; and fields kept deliberately across states — stale items or a prior error shown while a refresh runs — are concurrent facts, not one mode.
+
+With Zod, use `z.discriminatedUnion()` instead of `z.union()` — it selects the variant by a discriminator lookup instead of trying each in turn.
+
+# Rule: Use Top-Level `import type`
+
+Use `import type` for type-only imports, and prefer top-level `import type` over inline `import { type ... }` — under `verbatimModuleSyntax`, the inline form emits an empty `import {}`, a side-effect import that still executes the module at runtime.
+
+```ts
+// BAD - emits an empty side-effect import
+import { type User } from "./user";
+
+// GOOD - erased entirely
+import type { User } from "./user";
+```
+
+# Rule: Named Exports, No Barrel Files
+
+Don't use default exports. Don't use barrel files (`index.ts` that re-exports siblings). Both add indirection that breaks the link between an import and its source: default exports let importers pick arbitrary names, barrels route imports through an intermediary.
+
+Don't `export` symbols from internal modules unless they're consumed outside that module or are part of the package's public API. An `export` claims outside consumers exist — an unused one disguises dead code as API surface and makes the symbol look risky to change or delete when nothing would break.
+
+**Exception:** A single `index.ts` entry point for an npm library's public API is acceptable: this is the package boundary, not an internal convenience barrel.
+
+```ts
+// BAD
+import calc from "#components";
+
+// GOOD
+import { calculateTotal } from "#utils/calculate-total";
+```
+
+# Rule: No New Enums
+
+Never write an `enum` — the declaration compiles into a runtime JavaScript object instead of erasing with the other type syntax, so a file that carries one can't run under native type stripping (`node script.ts` refuses it). An `as const` object expresses the same thing in plain JavaScript:
+
+```ts
+const Size = {
+  xs: "EXTRA_SMALL",
+  sm: "SMALL",
+  md: "MEDIUM",
+} as const;
+
+type SizeKey = keyof typeof Size; // "xs" | "sm" | "md"
+type SizeValue = (typeof Size)[SizeKey]; // "EXTRA_SMALL" | "SMALL" | "MEDIUM"
+```
+
+Numeric enums are an extra trap: they produce reverse mappings that double the number of keys, so `Object.keys()` on a 4-member numeric enum returns 8 entries.
+
+# Rule: No Tests for Type Guarantees
+
+Don't write tests for what the type system already guarantees.
+
+```ts
+// BAD: the return type is literally { status: "inactive" } — this can never fail
+it("should return inactive status", () => {
+  const result = deactivate({ id: "u-123", status: "active" });
+  expect(result.status).toBe("inactive");
+});
+
+// GOOD: the type says `id: string`, but not WHICH id — returning the wrong one compiles
+it("preserves the user id", () => {
+  const result = deactivate({ id: "u-123", status: "active" });
+  expect(result.id).toBe("u-123");
+});
+```
+
+If removing a test and introducing a bug would cause a compile error, the test is redundant. If the bug would compile cleanly and only surface at runtime, the test has value.
+
+# Rule: No Unchecked Indexed Access
+
+An indexed read can always miss — `arr[0]` on an empty array, `obj.key` on an absent key — so under `noUncheckedIndexedAccess` it is typed `T | undefined` rather than `T`. Handle the `undefined` instead of assuming the index exists.
+
+```ts
+const arr: string[] = ["a", "b"];
+const obj: Record<string, string> = { foo: "bar" };
+
+// Both reads are typed `string | undefined`:
+const first = arr[0];
+const value = obj.key;
+
+// BAD: non-null assertion silences the check instead of handling the miss
+first!.toUpperCase();
+
+// GOOD: narrow before use
+if (first !== undefined) {
+  first.toUpperCase();
+}
+
+// GOOD: optional chaining
+arr[0]?.toUpperCase();
+```
+
+# Rule: Prefer `T | undefined` Over Optional Properties
+
+Prefer `T | undefined` over optional properties (`?`) when callers must always explicitly provide a value. Optional properties allow omission at call sites, which can mask bugs when a property is required but forgotten.
+
+```ts
+// BAD: forgetting userId silently compiles
+type AuthOptions = { userId?: string };
+
+// GOOD: forces explicit decision at call site
+type AuthOptions = { userId: string | undefined };
+```
+
+**Exception:** Optional properties are acceptable in React props when paired with a default — the default guarantees a value, so omission at the call site is intentional rather than a forgotten field.
+
+```tsx
+type ButtonProps = { variant?: "solid" | "outline" };
+
+// Default supplies the value when callers omit `variant`
+function Button({ variant = "solid" }: ButtonProps) {
+  return <button data-variant={variant} />;
+}
+```
+
+Optional props without a default — `userId?: string` on a hook's options — fall under the main rule.
+
+# Rule: Return Result Types Where Callers Must Handle Failure
+
+Throw errors when framework infrastructure handles them (e.g., a backend request handler converting the throw into an HTTP 500). For operations where callers must handle failure explicitly, return a result type instead of using `try`/`catch` at the call site — the caller can't reach `value` without checking `ok`:
+
+```ts
+type Result<T, E extends Error> = { ok: true; value: T } | { ok: false; error: E };
+
+const parseJson = (input: string): Result<unknown, Error> => {
+  try {
+    return { ok: true, value: JSON.parse(input) };
+  } catch (error) {
+    return { ok: false, error: error as Error };
+  }
+};
+
+const result = parseJson('{"name": "John"}');
+if (result.ok) {
+  console.log(result.value);
+} else {
+  console.error(result.error);
+}
+```
+
+# Rule: Annotate Return Types on Top-Level Functions
+
+Annotate return types on top-level module functions. Explicit return types document intent and catch incomplete implementations at the definition site.
+
+**Exceptions:**
+
+- React components need no annotation — they may return `ReactNode`, `null`, or async server-rendered results depending on the framework.
+- React hooks returning objects should still annotate: `(): { state: string; }`.
+
+# Rule: Test Local Packages with `file:`, Not `pnpm link`
+
+When developing a TypeScript package and testing it in a consuming project before release, install it as a `file:` dependency rather than via `pnpm link`. Ask the user where the package is checked out rather than assuming a path.
+
+`file:` installs the package the way a published tarball would: pnpm applies the same file selection `pnpm pack` would, so only what `package.json` would publish lands in the consumer's virtual store. A subpath export, a CSS file, or an asset left out of `files` fails in the consumer the same way it would fail after release, while `pnpm link` (or a `link:` dependency) symlinks your whole working tree and hides the omission; a missing `dist/` is not one of these cases — it fails identically either way.
+
+The store entries are hardlinks to your source files, not copies — a rebuild that rewrites a file in place already reaches the consumer, and a tool that rewrites files under the consumer's `node_modules` edits the package source. Nothing else propagates: a clean build, an added file, or a deleted one leaves the consumer on stale bytes. Don't reason about which case you are in; rebuild, then run `pnpm install` in the consumer — it re-imports the package and drops the files the build removed.
+
+## Workflow
+
+Initial wire-up:
+
+```bash
+cd <package-path> && pnpm build
+cd <consumer-path> && pnpm add @scope/package@file:<package-path>
+```
+
+After every package source change:
+
+```bash
+cd <package-path> && pnpm build
+cd <consumer-path> && pnpm install
+```
+
+Restart the consumer dev server.
+
+When done, replace the `file:` path with a published range — the range `package.json` carried before the swap, or the newly released version (`pnpm add @scope/package@^1.2.4`). Don't commit a `file:` dependency.
+
+# Rule: Use Explicit `include`/`exclude` in tsconfig Files
+
+Use explicit `include`/`exclude` patterns in environment-specific configs. Exclude test files from production; include them in test configs. A solution-style root `tsconfig.json` (`files: []` plus project references) lists no inputs of its own — the patterns belong in the leaf configs.
+
+```json
+// tsconfig.app.json (production)
+{ "include": ["src/**/*.ts"], "exclude": ["**/*.test.*", "**/*.spec.*"] }
+
+// tsconfig.test.json
+{ "include": ["**/*.test.*", "**/*.spec.*"], "exclude": ["node_modules", "dist"] }
+```
+
+## Glob support
+
+TypeScript globs are limited and differ from bash/zsh globs. Only three wildcards exist: `*` (any characters except a path separator), `?` (exactly one character except a path separator), and `**/` (any directory depth). Brace groups (`{a,b}`), extended patterns (`?(x)`, `!(x)`), and character classes (`[jt]`) are not supported — braces and brackets match as literal characters, so `src/**/*.{test,spec}.ts` matches only a file literally named with those braces. The mistake is loud only as the sole `include`, where it raises TS18003; as an `exclude` entry — or beside a pattern that does match — it silently covers nothing. Use `**/*.test.*` instead of `**/*.{test,spec}.?(c|m)[jt]s?(x)`.
+
+## Resolution priority
+
+`exclude` filters only what `include` picks up: a file matching both is excluded. Two things enter the program regardless of `exclude`: an explicit `files` entry, and any file imported by an included file.
+
+# Rule: Default to Zod `.nullish()` for Backend Fields That May Be Absent
+
+Default to `.nullish()` for Zod response-schema fields whose producer you don't fully control — it's the only modifier that accepts both `null` and a missing key: `.nullable()` rejects `undefined`, `.optional()` rejects `null`.
+
+```ts
+import * as z from "zod";
+
+// BAD — fails parse if the API omits `credits` from the response
+const Customer = z.object({
+  credits: z.array(Credit).nullable(),
+});
+
+// GOOD — accepts `[]`, `null`, and missing key
+const Customer = z.object({
+  credits: z
+    .array(Credit)
+    .nullish()
+    .transform((v) => v ?? []),
+});
+```
+
+A single missing key throws a `ZodError` from `.parse()`, which often runs inside an auth callback or request handler that turns the throw into a logout, redirect, or 500 — symptoms far removed from the schema mismatch.
+
+# Rule: Name Zod Schemas and Their Inferred Types Identically
+
+Use identical names for Zod schemas and their inferred types. Name both with PascalCase. TypeScript allows this because types and values exist in separate namespaces.
+
+```ts
+import * as z from "zod";
+
+// GOOD
+const User = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.email(),
+});
+
+type User = z.infer<typeof User>;
+```
+
+```ts
+// BAD: redundant suffix
+const UserSchema = z.object({ name: z.string() });
+type User = z.infer<typeof UserSchema>;
+```
+
+Export the schema and the type together — one concept, one name.
