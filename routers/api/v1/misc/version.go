@@ -25,6 +25,7 @@ func Version(ctx *context.APIContext) {
 		Version: setting.AppVer,
 		Capabilities: []string{
 			structs.ServerCapabilityActionsReviewerIsolation,
+			structs.ServerCapabilityActionsRerun,
 		},
 	})
 }

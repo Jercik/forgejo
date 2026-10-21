@@ -82,6 +82,11 @@ type ServerVersion struct {
 // users cannot select another reviewer's pending review.
 const ServerCapabilityActionsReviewerIsolation = "actions-reviewer-isolation"
 
+// ServerCapabilityActionsRerun guarantees that the server provides all three
+// Actions rerun endpoints — run rerun, rerun-failed-jobs and job rerun —
+// regardless of whether a given one comes from the base or a fork patch.
+const ServerCapabilityActionsRerun = "actions-rerun"
+
 // GitignoreTemplateInfo name and text of a gitignore template
 type GitignoreTemplateInfo struct {
 	Name   string `json:"name"`
