@@ -104,6 +104,32 @@ func TestGetCurrentReview(t *testing.T) {
 	assert.Nil(t, review2)
 }
 
+func TestGetCurrentReviewActionsUser(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	issue := unittest.AssertExistsAndLoadBean(t, &issues_model.Issue{ID: 2})
+	actionsUser := user_model.NewActionsUser()
+
+	// A pending human review already exists for this issue. The synthetic
+	// Actions user must not see it as its own current review.
+	review, err := issues_model.GetCurrentReview(db.DefaultContext, actionsUser, issue)
+	require.Error(t, err)
+	assert.True(t, issues_model.IsErrReviewNotExist(err))
+	assert.Nil(t, review)
+
+	actionsReview, err := issues_model.CreateReview(db.DefaultContext, issues_model.CreateReviewOptions{
+		Content:  "Actions pending review",
+		Type:     issues_model.ReviewTypePending,
+		Issue:    issue,
+		Reviewer: actionsUser,
+	})
+	require.NoError(t, err)
+
+	review, err = issues_model.GetCurrentReview(db.DefaultContext, actionsUser, issue)
+	require.NoError(t, err)
+	assert.Equal(t, actionsReview.ID, review.ID)
+	assert.Equal(t, int64(user_model.ActionsUserID), review.ReviewerID)
+}
+
 func TestCreateReview(t *testing.T) {
 	require.NoError(t, unittest.PrepareTestDatabase())
 

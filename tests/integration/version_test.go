@@ -28,6 +28,7 @@ func TestVersion(t *testing.T) {
 		var version structs.ServerVersion
 		DecodeJSON(t, resp, &version)
 		assert.Equal(t, setting.AppVer, version.Version)
+		assert.Equal(t, []string{structs.ServerCapabilityActionsReviewerIsolation}, version.Capabilities)
 	})
 
 	t.Run("Versions with REQUIRE_SIGNIN_VIEW enabled", func(t *testing.T) {
@@ -57,6 +58,7 @@ func TestVersion(t *testing.T) {
 			var version structs.ServerVersion
 			DecodeJSON(t, resp, &version)
 			assert.Equal(t, setting.AppVer, version.Version)
+			assert.Equal(t, []string{structs.ServerCapabilityActionsReviewerIsolation}, version.Capabilities)
 		})
 	})
 }
