@@ -74,7 +74,13 @@ type MarkdownRender string
 // ServerVersion wraps the version of the server
 type ServerVersion struct {
 	Version string `json:"version"`
+	// Capabilities advertised by this server build.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// ServerCapabilityActionsReviewerIsolation guarantees that synthetic Actions
+// users cannot select another reviewer's pending review.
+const ServerCapabilityActionsReviewerIsolation = "actions-reviewer-isolation"
 
 // GitignoreTemplateInfo name and text of a gitignore template
 type GitignoreTemplateInfo struct {
