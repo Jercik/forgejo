@@ -48,56 +48,9 @@ Use `-slim` Debian variants (e.g. `node:26-bookworm-slim`, `python:3.12-slim-boo
 
 # Rule: Set the Container UID in the Orchestrator, Not the Image
 
-Do not create users inside container images. Let the orchestrator (Podman Quadlet, Kubernetes, docker-compose) specify the non-root UID and GID the container runs as. An image-local account, or a write path only that account's UID can write, couples the image to that UID: OpenShift's restricted SCC or a Gatekeeper UID-range policy can require arbitrary UIDs, and an orchestrator-assigned UID that differs from the image's causes volume-ownership conflicts Podman papers over with the non-portable `:U` volume flag.
+Do not create users inside container images. Let the orchestrator (Quadlet `User=`/`Group=`, compose `user:`, Kubernetes `runAsUser`/`runAsGroup`) set the non-root UID and GID the container runs as, and create the host account with that same explicit UID and GID. A bare `docker run` or `podman run` has no orchestrator, so keep a `USER` naming the numeric UID of an unprivileged account the base image already ships; omit it only when every launcher of the image always sets a non-zero UID (`UserNS=` alone does not). A sandbox guest base such as the axjob guest, and every image built `FROM` it, keeps `USER root` as the key holder while its agent process runs as the base image's existing UID 1000 account; no other image falls back to root. Send runtime writes to orchestrator-provided volumes or tmpfs.
 
-`USER` supplies the default UID and GID, and `HOME` through the image's passwd unless the image sets `ENV HOME`. `--user`, `User=`, and `runAsUser` override it; Podman's `UserNS=keep-id` does not (Podman 5.4).
-
-```dockerfile
-# BAD: the account exists only in this image, and the container inherits its UID, GID, and HOME
-RUN groupadd -r myapp && useradd -r -g myapp myapp
-USER myapp
-```
-
-Minting a new account is the prohibited act, not running as one the base image already ships. Write the runtime stage without a `USER` instruction when every launcher of the image sets a non-zero UID: each unit, compose service, CI run, and documented run command, whether in this repository or named by evidence elsewhere, such as a Containerfile comment naming the deploying unit. `UserNS=` alone, a root UID, and a variable that may be unset do not count.
-
-The orchestrator's override reaches only the running container: a `USER` also applies to every later `RUN` step in its stage. Where build steps must run unprivileged, put a `USER` before them, set to the numeric UID of an account the base image already ships; those steps run under that account, and the orchestrator still overrides it at container start.
-
-## Never let the fallback be root
-
-An image deployed by a bare `podman run` or `docker run` has no orchestrator to assign anything, so dropping `USER` starts it as root. Unless the omit-`USER` condition above holds, keep a `USER` set to the numeric UID of an unprivileged account the base image already ships (`node`, `nginx`, `postgres`), looking up the UID in the base image. In a base image with no accounts (`FROM scratch`), set `USER` to a numeric non-zero UID without adding a passwd entry, set `ENV HOME`, and give writable paths to that UID and group 0, with group 0 getting the owner's permissions.
-
-```dockerfile
-# GOOD: no account is created; node (UID 1000) ships with the base image
-USER 1000
-```
-
-## Runtime writes
-
-Send runtime writes to orchestrator-provided volumes or tmpfs (`Volume=`, `Tmpfs=`, `emptyDir`), which also works with a read-only root filesystem (`ReadOnly=true`, `readOnlyRootFilesystem`). A new named volume copies the owner and mode of the image directory at its mount point; where the image has none, Podman chowns it to the container user and Docker leaves it root-owned. For a Docker named volume, create its mount point in the image and give it the same owner and mode (`chown -R 1000:0` and `chmod -R g=u`, as in the snippet below), whether or not the root filesystem is writable. Docker copies that owner into an empty volume when it mounts it; a volume that already holds data keeps its owner, so recreate it or `chown` it once. Only when the process must write to an image path and the root filesystem is writable, `chown` that path to the UID the fallback `USER` names and to group 0, and give group 0 the owner's permissions (`chmod g=u`), before the `USER` line, as in the snippet below. In either recipe, skip `chmod g=u` on a directory the app requires to be owner-only and create it with mode 700 (`install -d -o 1000 -g 0 -m 700`); only its owning UID can write it, so the orchestrator must run the process as that UID. OpenShift runs get group 0, as do UID-only runs (`--user 1136`, `runAsUser` without `runAsGroup`) whose UID is not in the image's passwd. A bind mount hides the image's copy of the directory it covers, so build-time ownership never reaches it. With Docker or rootful Podman, give a bind-mounted host path the container UID as its host owner, unless UID remapping is on (Docker's daemon `userns-remap`, Podman's `--userns=auto`); rootless Podman is covered below.
-
-```dockerfile
-RUN mkdir -p /result && chown -R 1000:0 /result && chmod -R g=u /result
-USER 1000
-```
-
-An orchestrator that also sets a GID (`Group=1100`, `runAsGroup`) replaces group 0; grant it with `GroupAdd=0`, compose `group_add: ["0"]`, or `supplementalGroups: [0]`, or use tmpfs or `emptyDir`.
-
-## Orchestrator configuration
-
-Podman Quadlet:
-
-```ini
-[Container]
-User=1100
-Group=1100
-ReadOnly=true
-Tmpfs=/tmp
-Volume=/var/lib/myapp:/data:rw
-```
-
-Kubernetes sets the UID and GID through the pod-level `securityContext` (`runAsUser`, `runAsGroup`). `runAsNonRoot` only makes the kubelet refuse a container whose UID is zero or cannot be verified as non-zero (a named `USER` without `runAsUser`, which is why the fallback `USER` is numeric). `fsGroup` adds a supplementary group to every process and, on volume types that support it (not `hostPath`), sets that group and setgid on the volume; it leaves image paths alone. docker-compose uses `user: "1100:1100"`.
-
-On the host, create the user and group with the same deterministic UID/GID the orchestrator specifies (`ansible.builtin.user`/`group` with explicit `uid:`/`gid:`), and for rootful Podman give bind-mounted data directories that owner. Rootless Podman maps host IDs through a user namespace, so under the default mapping use a named volume or `podman unshare chown` instead. Under `UserNS=keep-id` the process runs as the host user unless the image's `USER` or `User=` names another UID. When it is the host user, leave the bind-mounted host directory owned by that user, because `podman unshare chown` would take it away. For another UID, map the host user to that UID and GID with `UserNS=keep-id:uid=<UID>,gid=<GID>`; `podman unshare chown` uses a different mapping below the host UID and picks the wrong host ID (verified on Podman 5.4).
+When writing an image's `USER` or writable paths, a launcher's user, group, or volumes, or a container's host account, or when debugging a container permission error, load the `container-images` skill.
 
 # Rule: Avoid Leaky Abstractions
 
@@ -159,6 +112,8 @@ A module earns its place by what it hides behind an interface smaller than the i
 - If understanding a caller requires repeatedly reading a callee's body, that boundary hides nothing: inline it or redesign the interface.
 - A wrapper that only forwards calls adds surface without hiding anything; use the wrapped thing directly. An interface that hides infrastructure behind domain-shaped methods is the opposite case — that is depth.
 - In production code, one general operation serving all current callers beats several near-duplicate special-case ones.
+
+When a change adds or reshapes an interface — a new type, module, service, option, or error path — or splits, merges, wraps, or layers code, load the `module-design-tradeoffs` skill before settling the design.
 
 # Rule: Design Contracts Twice
 
@@ -261,7 +216,7 @@ function handleRequest(body: unknown): User {
 
 # Rule: Test What Matters
 
-Write tests where failure is expensive and the test can stay stable: business rules, data transformations, the functional core's public contracts, and a regression test for every bug you fix, shell code included, unless the compiler would reject the bug if it came back. Beyond those regression tests, leave the imperative shell — CLI entry points, HTTP handlers, database and file I/O — untested unless tests are requested; when they are, prefer a thin set of end-to-end flows over unit tests with mocks. Write fewer for pass-through forwarding, private helpers already covered through a public caller, call-count and call-order choreography, wholesale snapshots, and any test whose assertions mirror the implementation instead of the promised behavior.
+Write tests where failure is expensive and the test can stay stable: business rules, data transformations, the functional core's public contracts, and a regression test for every bug you fix, shell code included, unless the compiler would reject the bug if it came back. Beyond those regression tests, leave the imperative shell defined in “Separate the Functional Core from the Imperative Shell” untested unless tests are requested; when they are, prefer a thin set of end-to-end flows over unit tests with mocks. Write fewer for pass-through forwarding, private helpers already covered through a public caller, call-count and call-order choreography, wholesale snapshots, and any test whose assertions mirror the implementation instead of the promised behavior.
 
 ```ts
 // BAD: asserts internal choreography, not the promised behavior
@@ -293,108 +248,9 @@ Forks of upstream projects and vendored third-party code keep upstream's convent
 
 # Rule: Use `repoq` for Repository Queries
 
-Use `repoq` for reading repository state instead of piping `git` or the forge CLI through `awk`/`jq`/`grep`. Each command handles edge cases (detached HEAD, unborn branches, missing auth) and, under `--json`, returns validated JSON. It also carries one write verb: `pr create` opens a pull request on the detected forge, taking the body from a file or stdin rather than an argument the shell would expand. Use raw `git` for commit/push/merge, and the repo's forge CLI for the other forge-side mutations (issues, releases, PR edits) — `gh` for GitHub or `fgj` for Forgejo, per the detected provider. Run `npx -y repoq@latest --help` if unsure of the available subcommands; the explicit tag prevents `npx` from reusing a stale cached release.
+Use `repoq` for reading repository state instead of piping `git` or the forge CLI through `awk`/`jq`/`grep`. Each command handles edge cases (detached HEAD, unborn branches, missing auth) and, under `--json`, returns validated JSON. It also carries one write verb: `pr create` opens a pull request on the detected forge, taking the body from a file or stdin rather than an argument the shell would expand. Use raw `git` for commit/push/merge, and the repo's forge CLI for the other forge-side mutations (issues, releases, PR edits) — `gh` for GitHub or `fgj` for Forgejo, per the detected provider.
 
-# Rule: Expose Component Variants Through Scoped CSS Variables
-
-Expose component variants through scoped CSS custom properties rather than conditional class generation. Define variables with arbitrary property syntax (`[--btn-bg:value]`) and consume them with Tailwind's parentheses syntax (`bg-(--btn-bg)`). Map variant props to variable assignments while keeping structural styles constant.
-
-Consumers can override the variables via inline `style` — an inline declaration outranks the class-assigned value, while a parent-context value loses to the element's own variant assignment.
-
-Prefer CSS custom properties when values change at runtime (themes, animations), are reused across multiple utilities in a component, or need to be inherited by nested elements. Keep regular Tailwind utilities for breakpoints, one-off styles, and static values.
-
-```tsx
-import type { ReactNode } from "react";
-import { tv } from "tailwind-variants";
-
-const button = tv({
-  // structure references the variables; children inherit them
-  base: "bg-(--btn-bg) text-white *:data-[slot=icon]:text-(--btn-icon)",
-  variants: {
-    // variants only assign the values
-    color: {
-      blue: "[--btn-bg:var(--color-blue-600)] [--btn-icon:var(--color-blue-300)]",
-      red: "[--btn-bg:var(--color-red-600)] [--btn-icon:var(--color-red-300)]",
-    },
-  },
-  defaultVariants: { color: "blue" },
-});
-
-export function Button({ color, children }: { color?: "blue" | "red"; children: ReactNode }) {
-  return <button className={button({ color })}>{children}</button>;
-}
-```
-
-# Rule: Layer Effects with `before:` and `after:`, Not Extra DOM
-
-Use `before:` and `after:` variants for layered effects (optical borders, overlays, focus rings) without extra DOM. The pieces:
-
-- `absolute` on the pseudo-element, with the parent `relative` (or otherwise positioned) — an unpositioned parent leaves the layer sizing and placing itself against the viewport instead of the element
-- `-z-10` plus `isolate` on the parent to sit behind the element's content while staying above its own background — without a stacking context on the parent, a negative z-index drops the layer behind the parent's background, where it disappears
-- `pointer-events-none` when the layer shouldn't intercept clicks
-- a `content-[…]` utility only when the layer must carry text — every `before:`/`after:` utility already emits `content: var(--tw-content)`, which defaults to the empty string, so a decorative layer renders without one
-
-Combine with state variants (`hover:after:`, `focus-within:before:`) for interactive effects.
-
-```tsx
-// Layered button with optical border and hover overlay
-<button className="relative isolate rounded-lg border-4 border-transparent bg-(--btn-border)
-  before:absolute before:inset-0 before:-z-10 before:rounded-lg before:bg-(--btn-bg)
-  after:absolute after:inset-0 after:-z-10 after:shadow-[inset_0_1px_theme(--color-white/15%)]
-  hover:after:bg-(--btn-hover-overlay)" />
-```
-
-# Rule: Scope Descendant `z-*` with `isolate`
-
-Apply `isolate` to a container whose descendants use explicit `z-*` classes for layers local to the component. This creates a stacking context: the descendants are ordered only among themselves, and the whole subtree competes with outside elements at the container's own level. The tradeoff is that the container's own level then decides everything — an outside positioned element at a higher `z-index`, or at the same level but later in the markup, paints over the entire container, `z-20` descendants included. Combine with `relative` when the container is also a positioning anchor.
-
-A full-viewport overlay is the exception: a backdrop has to outrank the page, so it must not sit inside an isolated container — render it at the top level (or through a portal), where its z-index still competes globally.
-
-Other ways to open a stacking context cost something: a transform utility (`rotate-*`, `scale-*`, `translate-*`) also makes the box the containing block for `fixed` and `absolute` descendants, and `opacity` below 1 makes the whole subtree translucent. `isolate` moves and restyles nothing — the one thing it changes is blending: a descendant's `mix-blend-mode` then composites only within the container, never against what sits behind it.
-
-```tsx
-// The badge's z-10 competes only inside the card
-<div className="relative isolate">
-  <img className="relative z-0" src="/cover.jpg" alt="" />
-  <span className="absolute top-2 right-2 z-10">New</span>
-</div>
-```
-
-# Rule: Use `data-slot` for Sub-Component Styling
-
-Use `data-slot` attributes to mark internal component elements for parent-based styling. This avoids className prop drilling (e.g. `labelClassName`) while maintaining clear component boundaries.
-
-Apply this pattern when components pass style-related props to children (`hasIcon`, `showLabel`), have conditional className logic based on children, or need coordinated styling across label/input/error elements. Reserve it for internal component styling; external customization should still use className props.
-
-Target slots from the parent:
-
-- Direct child: `*:data-[slot=icon]:shrink-0` (`**:` for any descendant)
-- Sibling spacing: `[&>[data-slot=label]+[data-slot=control]]:mt-2`
-- Conditional via `:has()`: `[&:has([data-slot=error])_[data-slot=label]]:text-red-500`
-
-Relational selectors like the last two have no canonical native form — `npx @tailwindcss/cli canonicalize` rewrites child/descendant selectors to the shorthands and leaves these in the arbitrary `[&…]` form.
-
-Name slots by purpose (`icon`, `label`, `control`, `error`), not style (`left`, `red`).
-
-```tsx
-import type { ReactNode } from "react";
-
-// Field container that styles its children based on slots
-export function Field({ children }: { children: ReactNode }) {
-  return (
-    <div className="[&>[data-slot=label]+[data-slot=control]]:mt-2 **:data-[slot=error]:text-red-500">
-      {children}
-    </div>
-  );
-}
-
-// Usage:
-<Field>
-  <label data-slot="label">Email</label>
-  <input data-slot="control" type="email" />
-  <span data-slot="error">Invalid email</span>
-</Field>;
-```
+Run it as `npx -y --@j4k-oss:registry=https://code.j4k.dev/api/packages/j4k-oss/npm/ @j4k-oss/repoq@latest <command>`, and add `--help` if unsure of the available subcommands. It publishes only to the Forge registry as `@j4k-oss/repoq`; the unscoped `repoq` on npmjs is deprecated and frozen at an old release. Keep the `--@j4k-oss:registry` flag: without it, `npx` looks on npmjs, finds nothing, and fails with a 404. The `@latest` tag prevents `npx` from reusing a stale cached release.
 
 # Rule: Discriminated Unions, Not Bags of Optionals
 
@@ -422,7 +278,7 @@ Boolean mode flags are the same smell: two or more interdependent booleans model
 // BAD - creating and editing cannot both hold, and documentId means nothing outside editing
 type EditorState = { isCreating: boolean; isEditing: boolean; documentId?: string };
 
-// GOOD - three valid states, each carrying only its own data
+// GOOD
 type EditorState =
   | { mode: "closed" }
   | { mode: "creating" }
@@ -447,7 +303,7 @@ import type { User } from "./user";
 
 # Rule: Named Exports, No Barrel Files
 
-Don't use default exports. Don't use barrel files (`index.ts` that re-exports siblings). Both add indirection that breaks the link between an import and its source: default exports let importers pick arbitrary names, barrels route imports through an intermediary.
+Use named exports unless the consuming framework requires a default export. Don't use barrel files (`index.ts` that re-exports siblings). Both add indirection that breaks the link between an import and its source: default exports let importers pick arbitrary names, barrels route imports through an intermediary.
 
 Don't `export` symbols from internal modules unless they're consumed outside that module or are part of the package's public API. An `export` claims outside consumers exist — an unused one disguises dead code as API surface and makes the symbol look risky to change or delete when nothing would break.
 
@@ -472,8 +328,8 @@ const Size = {
   md: "MEDIUM",
 } as const;
 
-type SizeKey = keyof typeof Size; // "xs" | "sm" | "md"
-type SizeValue = (typeof Size)[SizeKey]; // "EXTRA_SMALL" | "SMALL" | "MEDIUM"
+type SizeKey = keyof typeof Size;
+type SizeValue = (typeof Size)[SizeKey];
 ```
 
 Numeric enums are an extra trap: they produce reverse mappings that double the number of keys, so `Object.keys()` on a 4-member numeric enum returns 8 entries.
@@ -607,12 +463,14 @@ Restart the consumer dev server.
 
 When done, replace the `file:` path with a published range — the range `package.json` carried before the swap, or the newly released version (`pnpm add @scope/package@^1.2.4`). Don't commit a `file:` dependency.
 
-# Rule: Use Explicit `include`/`exclude` in tsconfig Files
+# Rule: Define Intentional `files`/`include`/`exclude` in tsconfig Files
 
-Use explicit `include`/`exclude` patterns in environment-specific configs. Exclude test files from production; include them in test configs. A solution-style root `tsconfig.json` (`files: []` plus project references) lists no inputs of its own — the patterns belong in the leaf configs.
+Define intentional `files`, `include` and `exclude` inputs for each checking and production context. Keep test-only ambient inputs outside production. An actual checking root owns its inputs and `noEmit: true`; a retained solution-style root (`files: []` plus project references) leaves inputs to its leaf configs. Shared bases own compiler defaults, not source selection. In a layout accepted by [Align's native typed-lint validation](https://code.j4k.dev/j4k/align/src/branch/main/docs/typescript-policies.md#native-typed-lint-discovery), preserve the ordered `references` in the empty root `tsconfig.json`: the linter uses them to find the checking configs. Keep the repository's typecheck command checking those configs explicitly; a direct `tsc -p tsconfig.json` on the empty root checks no source files.
+
+When a production config extends a broad checking root, clear inherited checking-only `files` with `files: []` or replace them with intentional production files. Before removing a test or script checking config, compare its compiler options and diagnostics as well as file coverage. `types: ["node"]` does not isolate source-level `declare global` or module augmentation.
 
 ```json
-// tsconfig.app.json (production)
+// tsconfig.app.json (production source inputs; emission depends on the layout)
 { "include": ["src/**/*.ts"], "exclude": ["**/*.test.*", "**/*.spec.*"] }
 
 // tsconfig.test.json
@@ -621,7 +479,7 @@ Use explicit `include`/`exclude` patterns in environment-specific configs. Exclu
 
 ## Glob support
 
-TypeScript globs are limited and differ from bash/zsh globs. Only three wildcards exist: `*` (any characters except a path separator), `?` (exactly one character except a path separator), and `**/` (any directory depth). Brace groups (`{a,b}`), extended patterns (`?(x)`, `!(x)`), and character classes (`[jt]`) are not supported — braces and brackets match as literal characters, so `src/**/*.{test,spec}.ts` matches only a file literally named with those braces. The mistake is loud only as the sole `include`, where it raises TS18003; as an `exclude` entry — or beside a pattern that does match — it silently covers nothing. Use `**/*.test.*` instead of `**/*.{test,spec}.?(c|m)[jt]s?(x)`.
+TypeScript globs are limited and differ from bash/zsh globs. Only three wildcards exist: `*` (any characters except a path separator), `?` (exactly one character except a path separator), and `**/` (any directory depth). Brace groups (`{a,b}`), extended patterns (`?(x)`, `!(x)`), and character classes (`[jt]`) are not supported — braces and brackets match as literal characters, so `src/**/*.{test,spec}.ts` matches only a file literally named with those braces. The mistake is loud only as the sole `include`, where it raises TS18003; as an `exclude` entry — or beside a pattern that does match — it silently covers nothing. Use separate `**/*.test.*` and `**/*.spec.*` patterns instead of `**/*.{test,spec}.?(c|m)[jt]s?(x)`.
 
 ## Resolution priority
 
