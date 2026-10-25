@@ -13,6 +13,7 @@ import (
 
 	actions_model "forgejo.org/models/actions"
 	auth_model "forgejo.org/models/auth"
+	"forgejo.org/models/db"
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
@@ -341,6 +342,21 @@ jobs:
 			var l jsonLine
 			require.NoError(t, json.Unmarshal([]byte(lines[0]), &l))
 			assert.Equal(t, "step error: boom", l.Content)
+		})
+
+		// The placeholder task of a reusable-workflow outer job never gets a log file.
+		t.Run("task without log file: 404", func(t *testing.T) {
+			actionTask.LogFilename = ""
+			actionTask.LogInStorage = false
+			_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
+			require.NoError(t, err)
+
+			req := NewRequestf(t, "GET",
+				"/api/v1/repos/%s/actions/jobs/%d/logs",
+				repoA.FullName(), jobID,
+			)
+			req.AddTokenAuth(token)
+			MakeRequest(t, req, http.StatusNotFound)
 		})
 
 		httpContextA := NewAPITestContext(t, user2.Name, repoA.Name, auth_model.AccessTokenScopeWriteUser)
