@@ -23,7 +23,7 @@ import (
 )
 
 // Sentinel errors returned by OpenJobLogReader. The HTTP handler maps each
-// of these (and util.ErrNotExist) to 404; anything else is a 500.
+// of these (and util.ErrNotExist or os.ErrNotExist) to 404; anything else is a 500.
 var (
 	ErrJobNotExecuted = errors.New("job has not been executed yet")
 	ErrLogsExpired    = errors.New("logs have expired")
