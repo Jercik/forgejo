@@ -21,6 +21,7 @@ import (
 	"forgejo.org/modules/util"
 	packages_service "forgejo.org/services/packages"
 
+	"code.forgejo.org/xorm/xorm"
 	oci_digest "github.com/opencontainers/go-digest"
 )
 
@@ -51,12 +52,21 @@ func GetLocalBlob(ctx context.Context, ownerID int64, dig, imageName string) (*p
 	return blobDescriptor, nil
 }
 
+// retryOnConflict retries a whole transaction whose lookup-then-insert of a shared row lost to a concurrent
+// request. The loser cannot recover inside the transaction: PostgreSQL aborts it after the failed statement, and
+// xorm cannot continue a session after such an error. The retry's lookup finds the winner's committed row.
+//
+// ErrDuplicatePackageVersion reaches the retry only from createPackageAndVersion's second lookup: the request
+// replaced the version it found, but a concurrent request had already replaced it, so the retry replaces theirs.
+var retryOnConflict = db.RetryConfig{
+	AttemptCount: 3,
+	ErrorIs:      []error{xorm.ErrUniqueConstraintViolation, xorm.ErrDeadlock, packages_model.ErrDuplicatePackageVersion},
+}
+
 // SaveAsPackageBlob creates a package blob from an upload
 // The uploaded blob gets stored in a special upload version to link them to the package/image
 func SaveAsPackageBlob(ctx context.Context, hsr packages_module.HashedSizeReader, pci *packages_service.PackageCreationInfo) (*packages_model.PackageBlob, error) {
-	pb := packages_service.NewPackageBlob(hsr)
-
-	exists := false
+	var pb *packages_model.PackageBlob
 
 	contentStore := packages_module.NewContentStore()
 
@@ -65,40 +75,61 @@ func SaveAsPackageBlob(ctx context.Context, hsr packages_module.HashedSizeReader
 		return nil, err
 	}
 
-	err = db.WithTx(ctx, func(ctx context.Context) error {
+	err = db.RetryTx(ctx, retryOnConflict, func(ctx context.Context) error {
 		if err := packages_service.CheckSizeQuotaExceeded(ctx, pci.Creator, pci.Owner, packages_model.TypeContainer, hsr.Size()); err != nil {
 			return err
 		}
 
-		pb, exists, err = packages_model.GetOrInsertBlob(ctx, pb)
+		var rowExisted bool
+		var err error
+		pb, rowExisted, err = packages_model.GetOrInsertBlob(ctx, packages_service.NewPackageBlob(hsr))
 		if err != nil {
 			log.Error("Error inserting package blob: %v", err)
 			return err
 		}
-		// FIXME: Workaround to be removed in v1.20
-		// https://github.com/go-gitea/gitea/issues/19586
-		if exists {
-			err = contentStore.Has(packages_module.BlobHash256Key(pb.HashSHA256))
-			if err != nil && (errors.Is(err, util.ErrNotExist) || errors.Is(err, os.ErrNotExist)) {
-				log.Debug("Package registry inconsistent: blob %s does not exist on file system", pb.HashSHA256)
-				exists = false
-			}
-		}
-		if !exists {
-			if err := contentStore.Save(packages_module.BlobHash256Key(pb.HashSHA256), hsr, hsr.Size()); err != nil {
-				log.Error("Error saving package blob in content store: %v", err)
-				return err
-			}
-		}
 
-		return CreateFileForBlob(ctx, uploadVersion, pb)
-	})
-	if err != nil {
-		if !exists {
+		// Only a row inserted by this attempt makes the content file this attempt's to delete. Another request
+		// committed the row otherwise, and its content file may be the one on disk. The delete happens before the
+		// transaction ends: the uncommitted row blocks a concurrent insert of the same blob until then, so no other
+		// request can write the file in between.
+		removeContent := func() {
+			if rowExisted {
+				return
+			}
 			if err := contentStore.Delete(packages_module.BlobHash256Key(pb.HashSHA256)); err != nil {
 				log.Error("Error deleting package blob from content store: %v", err)
 			}
 		}
+
+		hasContent := rowExisted
+		// FIXME: Workaround to be removed in v1.20
+		// https://github.com/go-gitea/gitea/issues/19586
+		if rowExisted {
+			err = contentStore.Has(packages_module.BlobHash256Key(pb.HashSHA256))
+			if err != nil && (errors.Is(err, util.ErrNotExist) || errors.Is(err, os.ErrNotExist)) {
+				log.Debug("Package registry inconsistent: blob %s does not exist on file system", pb.HashSHA256)
+				hasContent = false
+			}
+		}
+		if !hasContent {
+			if err := contentStore.Save(packages_module.BlobHash256Key(pb.HashSHA256), hsr, hsr.Size()); err != nil {
+				log.Error("Error saving package blob in content store: %v", err)
+				removeContent()
+				return err
+			}
+		}
+
+		if err := CreateFileForBlob(ctx, uploadVersion, pb); err != nil {
+			removeContent()
+			if !hasContent {
+				// hsr is consumed, so a retry could not write the content again.
+				return errors.New(err.Error())
+			}
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
