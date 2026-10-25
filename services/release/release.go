@@ -25,6 +25,8 @@ import (
 	"forgejo.org/modules/util"
 	"forgejo.org/services/attachment"
 	notify_service "forgejo.org/services/notify"
+
+	"code.forgejo.org/xorm/xorm"
 )
 
 type AttachmentChange struct {
@@ -132,6 +134,38 @@ func createTag(ctx context.Context, gitRepo *git.Repository, rel *repo_model.Rel
 	return created, nil
 }
 
+// insertRelease inserts a new release row. The background tag sync may insert
+// the tag-only row for the same tag after the caller's existence check and before
+// this insert, which violates the unique index on (repo_id, tag_name). The row
+// the sync wrote is then turned into the release, the way the API does for an
+// existing tag-only row. A regular release at that tag is reported as
+// repo_model.ErrReleaseAlreadyExist.
+//
+// ctx must not be a transaction: after a failed statement PostgreSQL aborts the
+// whole transaction and the follow-up read would fail.
+func insertRelease(ctx context.Context, rel *repo_model.Release) error {
+	err := db.Insert(ctx, rel)
+	if !errors.Is(err, xorm.ErrUniqueConstraintViolation) {
+		return err
+	}
+
+	existing, getErr := repo_model.GetRelease(ctx, rel.RepoID, rel.TagName)
+	if getErr != nil {
+		return err
+	}
+	if !existing.IsTag {
+		return repo_model.ErrReleaseAlreadyExist{
+			TagName: rel.TagName,
+		}
+	}
+
+	rel.ID = existing.ID
+	if rel.CreatedUnix == 0 {
+		rel.CreatedUnix = existing.CreatedUnix
+	}
+	return repo_model.UpdateRelease(ctx, rel)
+}
+
 // CreateRelease creates a new release of repository.
 func CreateRelease(gitRepo *git.Repository, rel *repo_model.Release, msg string, attachmentChanges []*AttachmentChange) error {
 	has, err := repo_model.IsReleaseExist(gitRepo.Ctx, rel.RepoID, rel.TagName)
@@ -149,7 +183,7 @@ func CreateRelease(gitRepo *git.Repository, rel *repo_model.Release, msg string,
 
 	rel.Title, _ = util.SplitStringAtByteN(rel.Title, 255)
 	rel.LowerTagName = strings.ToLower(rel.TagName)
-	if err = db.Insert(gitRepo.Ctx, rel); err != nil {
+	if err = insertRelease(gitRepo.Ctx, rel); err != nil {
 		return err
 	}
 
