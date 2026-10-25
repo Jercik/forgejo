@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -140,6 +141,20 @@ func failInsert(table, marker string) func(c *contexts.ContextHook) error {
 	}
 }
 
+// failInsertWithViolation fails every INSERT into table whose arguments include marker as the database would
+// report a unique violation, and counts the INSERTs into countedTable.
+func failInsertWithViolation(table, marker, countedTable string, count *int) func(c *contexts.ContextHook) error {
+	return func(c *contexts.ContextHook) error {
+		if strings.HasPrefix(c.SQL, "INSERT INTO `"+countedTable+"`") {
+			*count++
+		}
+		if err := failInsert(table, marker)(c); err != nil {
+			return fmt.Errorf("%w: %w", xorm.ErrUniqueConstraintViolation, errInjected)
+		}
+		return nil
+	}
+}
+
 func chainRules(rules ...func(c *contexts.ContextHook) error) func(c *contexts.ContextHook) error {
 	return func(c *contexts.ContextHook) error {
 		for _, rule := range rules {
@@ -236,6 +251,22 @@ func TestSaveAsPackageBlobFailureRemovesOwnContent(t *testing.T) {
 	assert.EqualValues(t, 0, countBlobs(t, buf))
 }
 
+func TestSaveAsPackageBlobDoesNotRetryAfterWritingContent(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+
+	buf := hashedBuffer(t, "race test blob: violation after the content was written")
+	blobInserts := 0
+	installRaceHook(t, failInsertWithViolation("package_file", "sha256_"+packages_service.NewPackageBlob(buf).HashSHA256, "package_blob", &blobInserts))
+
+	_, err := SaveAsPackageBlob(t.Context(), buf, blobCreationInfo(user2, "race-blob-no-retry"))
+	require.ErrorContains(t, err, errInjected.Error())
+
+	// A retry would read the consumed buf and replace the content file with an empty one.
+	assert.Equal(t, 1, blobInserts)
+	assert.False(t, contentExists(buf))
+}
+
 const (
 	raceLayerBase64    = "H4sIAAAJbogA/2IYBaNgFIxYAAgAAP//Lq+17wAEAAA="
 	raceConfigContent  = `{"architecture":"amd64","config":{"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["/true"],"ArgsEscaped":true,"Image":"sha256:9bd8b88dc68b80cffe126cc820e4b52c6e558eb3b37680bfee8e5f3ed7b8c257"},"container":"b89fe92a887d55c0961f02bdfbfd8ac3ddf66167db374770d2d9e9fab3311510","container_config":{"Hostname":"b89fe92a887d","Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],"Cmd":["/bin/sh","-c","#(nop) ","CMD [\"/true\"]"],"ArgsEscaped":true,"Image":"sha256:9bd8b88dc68b80cffe126cc820e4b52c6e558eb3b37680bfee8e5f3ed7b8c257"},"created":"2022-01-01T00:00:00.000000000Z","docker_version":"20.10.12","history":[{"created":"2022-01-01T00:00:00.000000000Z","created_by":"/bin/sh -c #(nop) COPY file:0e7589b0c800daaf6fa460d2677101e4676dd9491980210cb345480e513f3602 in /true "},{"created":"2022-01-01T00:00:00.000000001Z","created_by":"/bin/sh -c #(nop)  CMD [\"/true\"]","empty_layer":true}],"os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:0ff3b91bdf21ecdf2f2f3d4372c2098a14dbe06cd678e8f0a85fd4902d00e2e2"]}}`
@@ -317,4 +348,29 @@ func TestProcessManifestLostBlobRaceThenFailureKeepsWinnersContent(t *testing.T)
 	assert.Equal(t, 1, hook.violations(), "the loser must have lost the insert")
 	assert.EqualValues(t, 1, countBlobs(t, manifestBuf))
 	assert.True(t, contentExists(manifestBuf), "the loser's cleanup deleted the winner's content")
+}
+
+func TestProcessManifestLostOverwriteRaceOnExistingTag(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+	user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+
+	image := "race-manifest-overwrite"
+	pushImageBlobs(t, user2, image)
+	// The winner already replaced the tag's old version with this one.
+	_, err := putManifest(t, user2, image, "latest", raceImageManifest)
+	require.NoError(t, err)
+	// Stands in for the old version the loser found before the winner committed.
+	// Deleting it does not free the tag, as deleting the winner-deleted old version on PostgreSQL does not.
+	_, err = putManifest(t, user2, image, "decoy", raceImageManifest)
+	require.NoError(t, err)
+
+	installRaceHook(t, missFirstLookup("FROM `package_version` WHERE lower_version=? AND package_id=?", func(arg any) (any, bool) {
+		version, ok := arg.(string)
+		return "decoy", ok && version == "latest"
+	}))
+
+	digest, err := putManifest(t, user2, image, "latest", raceImageManifest)
+	require.NoError(t, err)
+	assert.Equal(t, raceManifestDigest, digest)
+	assert.EqualValues(t, 1, countVersions(t, image, "latest"))
 }

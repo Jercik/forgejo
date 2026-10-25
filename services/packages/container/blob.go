@@ -55,9 +55,12 @@ func GetLocalBlob(ctx context.Context, ownerID int64, dig, imageName string) (*p
 // retryOnConflict retries a whole transaction whose lookup-then-insert of a shared row lost to a concurrent
 // request. The loser cannot recover inside the transaction: PostgreSQL aborts it after the failed statement, and
 // xorm cannot continue a session after such an error. The retry's lookup finds the winner's committed row.
+//
+// ErrDuplicatePackageVersion reaches the retry only from createPackageAndVersion's second lookup: the request
+// replaced the version it found, but a concurrent request had already replaced it, so the retry replaces theirs.
 var retryOnConflict = db.RetryConfig{
 	AttemptCount: 3,
-	ErrorIs:      []error{xorm.ErrUniqueConstraintViolation, xorm.ErrDeadlock},
+	ErrorIs:      []error{xorm.ErrUniqueConstraintViolation, xorm.ErrDeadlock, packages_model.ErrDuplicatePackageVersion},
 }
 
 // SaveAsPackageBlob creates a package blob from an upload
