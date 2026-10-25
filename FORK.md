@@ -1,8 +1,8 @@
 # The j4k Forgejo fork
 
 This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.0`
-(`0d791421f85ca13a63b665053d81ea765fbbc571`). The next release is
-`v17.0.0-j4k.1`, published as `ghcr.io/jercik/forgejo:17.0.0-j4k.1-rootless`.
+(`0d791421f85ca13a63b665053d81ea765fbbc571`). The latest release is
+`v17.0.0-j4k.2`, published as `ghcr.io/jercik/forgejo:17.0.0-j4k.2-rootless`.
 
 ## Branch model
 
@@ -37,6 +37,23 @@ reachable after a rebase.
   `v17.0.0`; the capability's contract is that all three endpoints exist. The
   `rerun-failed-jobs` endpoint is fork-invented and has no upstream equivalent;
   drop the capability only when all three exist upstream.
+- Container-registry write races. A concurrent push of an identical manifest or
+  blob hit a unique violation (`UQE_package_version_s`,
+  `UQE_package_blob_sha256`) and answered 500, and a lost blob insert panicked
+  on a nil blob in `services/packages/container/blob.go`. The manifest and blob
+  writes now run in `db.RetryTx`, and cleanup deletes only content that the
+  attempt's own insert created, never the winner's file. Drop the carry when
+  upstream makes these writes idempotent; as of `v17.0.0` it does not.
+- Release creation tolerates the background tag sync. `insertRelease` in
+  `services/release/release.go` adopts a tag-only row that the sync wrote
+  between the existence check and the insert, instead of answering 500 on
+  `UQE_release_n`. A regular release at the tag still yields
+  `ErrReleaseAlreadyExist`. Drop the carry when upstream handles the same race;
+  as of `v17.0.0` it does not.
+- `GET .../actions/jobs/{job_id}/logs` answers 404, not 500, for a task without
+  a log file (the placeholder task of a reusable-workflow outer job), because
+  `GetActionJobLogs` also maps `os.ErrNotExist`. Drop the carry when upstream
+  maps the same error; as of `v17.0.0` it does not.
 
 ## Temporary upstream backports
 
