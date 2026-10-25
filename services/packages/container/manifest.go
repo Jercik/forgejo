@@ -153,8 +153,14 @@ func ProcessManifest(ctx context.Context, mci ManifestCreationInfo, buf *package
 
 func processImageManifest(ctx context.Context, mci ManifestCreationInfo, buf *packages_module.HashedBuffer) (string, error) {
 	manifestDigest := ""
+	var pv *packages_model.PackageVersion
 
-	err := func() error {
+	err := db.RetryTx(ctx, retryOnConflict, func(ctx context.Context) error {
+		// A retry starts after the previous attempt consumed buf.
+		if _, err := buf.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+
 		var manifest oci.Manifest
 		if err := json.NewDecoder(buf).Decode(&manifest); err != nil {
 			return err
@@ -163,12 +169,6 @@ func processImageManifest(ctx context.Context, mci ManifestCreationInfo, buf *pa
 		if _, err := buf.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-
-		ctx, committer, err := db.TxContext(ctx)
-		if err != nil {
-			return err
-		}
-		defer committer.Close()
 
 		configDescriptor, err := container_model.GetContainerBlob(ctx, &container_model.BlobSearchOptions{
 			OwnerID: mci.Owner.ID,
@@ -219,7 +219,7 @@ func processImageManifest(ctx context.Context, mci ManifestCreationInfo, buf *pa
 			})
 		}
 
-		pv, err := createPackageAndVersion(ctx, mci, metadata)
+		pv, err = createPackageAndVersion(ctx, mci, metadata)
 		if err != nil {
 			return err
 		}
@@ -235,35 +235,21 @@ func processImageManifest(ctx context.Context, mci ManifestCreationInfo, buf *pa
 			}
 		}
 
-		pb, created, digest, err := createManifestBlob(ctx, mci, pv, buf)
-		removeBlob := false
-		defer func() {
-			if removeBlob {
-				contentStore := packages_module.NewContentStore()
-				if err := contentStore.Delete(packages_module.BlobHash256Key(pb.HashSHA256)); err != nil {
-					log.Error("Error deleting package blob from content store: %v", err)
-				}
-			}
-		}()
+		pb, inserted, digest, err := createManifestBlob(ctx, mci, pv, buf)
 		if err != nil {
-			removeBlob = created
-			return err
-		}
-
-		if err := committer.Commit(); err != nil {
-			removeBlob = created
-			return err
-		}
-
-		if err := notifyPackageCreate(ctx, mci.Creator, pv); err != nil {
+			removeInsertedBlobContent(pb, inserted)
 			return err
 		}
 
 		manifestDigest = digest
 
 		return nil
-	}()
+	})
 	if err != nil {
+		return "", err
+	}
+
+	if err := notifyPackageCreate(ctx, mci.Creator, pv); err != nil {
 		return "", err
 	}
 
@@ -272,8 +258,14 @@ func processImageManifest(ctx context.Context, mci ManifestCreationInfo, buf *pa
 
 func processImageManifestIndex(ctx context.Context, mci ManifestCreationInfo, buf *packages_module.HashedBuffer) (string, error) {
 	manifestDigest := ""
+	var pv *packages_model.PackageVersion
 
-	err := func() error {
+	err := db.RetryTx(ctx, retryOnConflict, func(ctx context.Context) error {
+		// A retry starts after the previous attempt consumed buf.
+		if _, err := buf.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+
 		var index oci.Index
 		if err := json.NewDecoder(buf).Decode(&index); err != nil {
 			return err
@@ -282,12 +274,6 @@ func processImageManifestIndex(ctx context.Context, mci ManifestCreationInfo, bu
 		if _, err := buf.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-
-		ctx, committer, err := db.TxContext(ctx)
-		if err != nil {
-			return err
-		}
-		defer committer.Close()
 
 		metadata := &container_module.Metadata{
 			Type:      container_module.TypeOCI,
@@ -334,40 +320,27 @@ func processImageManifestIndex(ctx context.Context, mci ManifestCreationInfo, bu
 			})
 		}
 
-		pv, err := createPackageAndVersion(ctx, mci, metadata)
+		var err error
+		pv, err = createPackageAndVersion(ctx, mci, metadata)
 		if err != nil {
 			return err
 		}
 
-		pb, created, digest, err := createManifestBlob(ctx, mci, pv, buf)
-		removeBlob := false
-		defer func() {
-			if removeBlob {
-				contentStore := packages_module.NewContentStore()
-				if err := contentStore.Delete(packages_module.BlobHash256Key(pb.HashSHA256)); err != nil {
-					log.Error("Error deleting package blob from content store: %v", err)
-				}
-			}
-		}()
+		pb, inserted, digest, err := createManifestBlob(ctx, mci, pv, buf)
 		if err != nil {
-			removeBlob = created
-			return err
-		}
-
-		if err := committer.Commit(); err != nil {
-			removeBlob = created
-			return err
-		}
-
-		if err := notifyPackageCreate(ctx, mci.Creator, pv); err != nil {
+			removeInsertedBlobContent(pb, inserted)
 			return err
 		}
 
 		manifestDigest = digest
 
 		return nil
-	}()
+	})
 	if err != nil {
+		return "", err
+	}
+
+	if err := notifyPackageCreate(ctx, mci.Creator, pv); err != nil {
 		return "", err
 	}
 
@@ -544,12 +517,25 @@ func createFileFromBlobReference(ctx context.Context, pv, uploadVersion *package
 	return nil
 }
 
+// removeInsertedBlobContent deletes the content of a blob whose row this attempt inserted, before its transaction
+// ends: the uncommitted row blocks a concurrent insert of the same blob, so no other request can write the file
+// in between. A blob row inserted by another request keeps its content.
+func removeInsertedBlobContent(pb *packages_model.PackageBlob, inserted bool) {
+	if !inserted {
+		return
+	}
+	if err := packages_module.NewContentStore().Delete(packages_module.BlobHash256Key(pb.HashSHA256)); err != nil {
+		log.Error("Error deleting package blob from content store: %v", err)
+	}
+}
+
 func createManifestBlob(ctx context.Context, mci ManifestCreationInfo, pv *packages_model.PackageVersion, buf *packages_module.HashedBuffer) (*packages_model.PackageBlob, bool, string, error) {
 	pb, exists, err := packages_model.GetOrInsertBlob(ctx, packages_service.NewPackageBlob(buf))
 	if err != nil {
 		log.Error("Error inserting package blob: %v", err)
 		return nil, false, "", err
 	}
+	inserted := !exists
 	// FIXME: Workaround to be removed in v1.20
 	// https://github.com/go-gitea/gitea/issues/19586
 	if exists {
@@ -577,7 +563,7 @@ func createManifestBlob(ctx context.Context, mci ManifestCreationInfo, pv *packa
 		IsLead:       true,
 	})
 
-	return pb, !exists, manifestDigest, err
+	return pb, inserted, manifestDigest, err
 }
 
 // Attempty to link a package to a repository in the following order of precedence: by annotation, by label and finally by image name.
