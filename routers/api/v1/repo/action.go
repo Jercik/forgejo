@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 
 	actions_model "forgejo.org/models/actions"
 	"forgejo.org/models/db"
@@ -1955,6 +1956,7 @@ func GetActionJobLogs(ctx *context.APIContext) {
 	if err != nil {
 		switch {
 		case errors.Is(err, util.ErrNotExist),
+			errors.Is(err, os.ErrNotExist),
 			errors.Is(err, actions_service.ErrJobNotExecuted),
 			errors.Is(err, actions_service.ErrLogsExpired),
 			errors.Is(err, actions_service.ErrStepOutOfRange):
