@@ -14,6 +14,7 @@ import (
 	"forgejo.org/modules/git"
 	"forgejo.org/modules/gitrepo"
 	"forgejo.org/modules/test"
+	"forgejo.org/modules/timeutil"
 	"forgejo.org/services/attachment"
 
 	"github.com/stretchr/testify/assert"
@@ -538,4 +539,81 @@ func TestCreateNewTag(t *testing.T) {
 
 	require.NoError(t, CreateNewTag(git.DefaultContext, user, repo, "master", "v2.0",
 		"v2.0 is released \n\n BUGFIX: .... \n\n 123"))
+}
+
+// TestRelease_insertRelease_TagSyncRace covers the window between the
+// existence check in CreateRelease and the insert, in which the background tag
+// sync may write the tag-only row for the same tag.
+func TestRelease_insertRelease_TagSyncRace(t *testing.T) {
+	require.NoError(t, unittest.PrepareTestDatabase())
+
+	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 1})
+
+	newRelease := func(tagName string) *repo_model.Release {
+		return &repo_model.Release{
+			RepoID:       repo.ID,
+			Repo:         repo,
+			PublisherID:  user.ID,
+			Publisher:    user,
+			TagName:      tagName,
+			LowerTagName: strings.ToLower(tagName),
+			Target:       "master",
+			Title:        "released " + tagName,
+			Note:         "notes for " + tagName,
+			Sha1:         "65f1bf27bc3bf70f64657658635e66094edbcb4d",
+			NumCommits:   3,
+		}
+	}
+
+	t.Run("tag-only row is turned into the release", func(t *testing.T) {
+		tagRow := &repo_model.Release{
+			RepoID:       repo.ID,
+			PublisherID:  user.ID,
+			TagName:      "Race-Tag",
+			LowerTagName: "race-tag",
+			Target:       "master",
+			Sha1:         "65f1bf27bc3bf70f64657658635e66094edbcb4d",
+			IsTag:        true,
+			CreatedUnix:  946684801,
+		}
+		require.NoError(t, db.Insert(db.DefaultContext, tagRow))
+
+		rel := newRelease("Race-Tag")
+		require.NoError(t, insertRelease(db.DefaultContext, rel))
+		assert.Equal(t, tagRow.ID, rel.ID)
+
+		got, err := repo_model.GetReleaseByID(db.DefaultContext, tagRow.ID)
+		require.NoError(t, err)
+		assert.False(t, got.IsTag)
+		assert.Equal(t, "released Race-Tag", got.Title)
+		assert.Equal(t, "notes for Race-Tag", got.Note)
+		assert.Equal(t, int64(3), got.NumCommits)
+		assert.Equal(t, timeutil.TimeStamp(946684801), got.CreatedUnix)
+
+		count, err := db.GetEngine(db.DefaultContext).Where("repo_id = ? AND lower_tag_name = ?", repo.ID, "race-tag").Count(&repo_model.Release{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), count)
+	})
+
+	t.Run("full release is not overwritten", func(t *testing.T) {
+		// Fixture release v1.1 is a regular release.
+		before := unittest.AssertExistsAndLoadBean(t, &repo_model.Release{ID: 1})
+		require.False(t, before.IsTag)
+
+		err := insertRelease(db.DefaultContext, newRelease("v1.1"))
+		require.Error(t, err)
+		assert.True(t, repo_model.IsErrReleaseAlreadyExist(err), "got %T: %v", err, err)
+
+		after := unittest.AssertExistsAndLoadBean(t, &repo_model.Release{ID: 1})
+		assert.Equal(t, before.Title, after.Title)
+		assert.Equal(t, before.Note, after.Note)
+	})
+
+	t.Run("no conflict inserts a new row", func(t *testing.T) {
+		rel := newRelease("fresh-tag")
+		require.NoError(t, insertRelease(db.DefaultContext, rel))
+		assert.NotZero(t, rel.ID)
+		unittest.AssertExistsAndLoadBean(t, &repo_model.Release{ID: rel.ID, IsTag: false})
+	})
 }
