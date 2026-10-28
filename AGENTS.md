@@ -1,6 +1,6 @@
 # Rule: Read the Startup Files First
 
-This repository is a fork. Read its fork documentation, @FORK.md or @UPSTREAMING.md (whichever exists; a fork may have neither), and then @README.md before taking any action. The fork documentation records what the fork changes and how it is built, released, and rebased; it wins where `README.md` or other files inherited from upstream describe upstream instead.
+This repository is a fork. Read its fork documentation @FORK.md and then @README.md before taking any action. The fork documentation records what the fork changes and how it is built, released, and rebased; it wins where `README.md` or other files inherited from upstream describe upstream instead.
 
 # Rule: Execute Commands from Arrays, Not Strings
 
@@ -248,7 +248,7 @@ A good test survives a behavior-preserving refactor; one that must change with i
 
 # Rule: Follow Upstream Conventions in Upstream Code
 
-This repository is a fork: its `upstream` git remote names the project it tracks. Files in upstream's tree — files that exist upstream and new files you add to its packages — follow upstream's conventions over this file's code and container rules: file names, comments, error handling, module and type structure, test shape, changelog entries, base images, image users, and account creation. That keeps fork changes rebasing cleanly onto upstream. Rules about how you work, such as startup reads, verification, and tool usage, still apply everywhere. Files only the fork needs — its own tooling, CI, and documentation — follow this file's rules.
+This repository is a fork: its `FORK.md` names the upstream project it tracks. Files in upstream's tree — files that exist upstream and new files you add to its packages — follow upstream's conventions over this file's code and container rules: file names, comments, error handling, module and type structure, test shape, changelog entries, base images, image users, and account creation. That keeps fork changes rebasing cleanly onto upstream. Rules about how you work, such as startup reads, verification, and tool usage, still apply everywhere. Files only the fork needs — its own tooling, CI, and documentation — follow this file's rules.
 
 Submit nothing upstream, neither pull requests nor issues, unless the user asks and the fork's documentation does not forbid it.
 
