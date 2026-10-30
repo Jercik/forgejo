@@ -20,24 +20,31 @@ jobs:
         env:
           TAGS: sqlite sqlite_unlock_notify
         run: |
-          # Every test a carry adds or modifies, by its exact name, so that the
-          # job fails when any one of them stops passing. Upstream tests that no
-          # carry modifies stay out.
+          # Every test a carry adds or modifies, and every upstream test of a
+          # function a carry modifies, by its exact name, so that the job fails
+          # when any one of them stops passing. A comment names the carried
+          # function that an upstream test covers.
           integration=(
             TestAPIPullReviewResolve
             TestAPIPullReviewActionsUserPendingIsolation
             TestVersion
             TestActionsAPIRerunFailedJobs
             TestAPIGetActionJobLogs
+            TestActionsDownloadTaskLogs # Logs
+            TestActionsDownloadTaskRerunLogs # Logs
             TestActionsDownloadTaskLogsWithoutLogFile
+            TestAPIBranchProtection # CreateBranchProtection, EditBranchProtection
             TestAPIBranchProtectionRejectsUnusableStatusCheckPattern
             TestProtectedBranch_RejectsUnusableStatusCheckPattern
           )
           unit=(
+            TestFindReviews # FindReviewOptions.toCond
+            TestGetCurrentReview # FindReviewOptions.toCond
             TestGetCurrentReviewActionsUser
             TestSubmitReviewActionsUserIsolation
             TestRerunFailedJobs
             TestCollectFailedRerunJobs
+            Test_SaveAndGetManifestAndBlob # SaveAsPackageBlob, GetLocalBlob, processImageManifest
             TestSaveAsPackageBlobLostInsertRace
             TestSaveAsPackageBlobLostInsertRaceThenFailureKeepsWinnersContent
             TestSaveAsPackageBlobFailureRemovesOwnContent
@@ -45,7 +52,9 @@ jobs:
             TestProcessManifestLostVersionRace
             TestProcessManifestLostBlobRaceThenFailureKeepsWinnersContent
             TestProcessManifestLostOverwriteRaceOnExistingTag
+            TestRelease_Create # CreateRelease
             TestRelease_insertRelease_TagSyncRace
+            TestMergeRequiredContextsCommitStatus # MergeRequiredContextsCommitStatus
             TestMergeRequiredContextsCommitStatusBlocksOnUnusablePattern
             TestCompileStatusCheckPattern
             TestCompileStatusCheckPatternRejectsEveryPanickingPattern
