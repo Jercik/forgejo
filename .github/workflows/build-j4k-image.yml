@@ -39,6 +39,7 @@ jobs:
             TestProcessManifest
             TestRelease_insertRelease_TagSyncRace
             TestMergeRequiredContextsCommitStatus
+            TestMergeRequiredContextsCommitStatusBlocksOnUnusablePattern
             StatusCheckPattern
           )
 
