@@ -613,7 +613,10 @@ func Logs(ctx *app_context.Context) {
 
 	reader, err := actions.OpenLogs(ctx, task.LogInStorage, task.LogFilename)
 	if errors.Is(err, os.ErrNotExist) {
-		ctx.Error(http.StatusNotFound, "log file not found")
+		if !errors.Is(err, actions.ErrNoLogFile) {
+			log.Error("Logs job %d: %v", job.ID, err)
+		}
+		ctx.Error(http.StatusNotFound, actions.LogNotFoundMessage)
 		return
 	} else if err != nil {
 		ctx.Error(http.StatusInternalServerError, err.Error())

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -269,6 +270,13 @@ func WriteRunLogsZip(ctx context.Context, w io.Writer, run *actions_model.Action
 		}
 
 		reader, err := actions.OpenLogs(ctx, task.LogInStorage, task.LogFilename)
+		if errors.Is(err, os.ErrNotExist) {
+			// The error names the path of the missing log file.
+			if !errors.Is(err, actions.ErrNoLogFile) {
+				log.Error("WriteRunLogsZip job %d: %v", job.ID, err)
+			}
+			return writeMarker(job, "MISSING", actions.LogNotFoundMessage+"\n")
+		}
 		if err != nil {
 			return writeMarker(job, "MISSING", fmt.Sprintf("log open failed: %v\n", err))
 		}

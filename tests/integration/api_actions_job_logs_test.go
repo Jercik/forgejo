@@ -7,6 +7,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"forgejo.org/modules/actions"
 	"forgejo.org/modules/json"
 	"forgejo.org/modules/setting"
+	api "forgejo.org/modules/structs"
 
 	runnerv1 "code.forgejo.org/forgejo/actions-proto/runner/v1"
 	"github.com/stretchr/testify/assert"
@@ -348,12 +350,31 @@ jobs:
 
 		// The placeholder task of a reusable-workflow outer job never gets a log
 		// file. The transfer cron job later sets log_in_storage on it all the same.
-		for _, inStorage := range []bool{false, true} {
-			t.Run(fmt.Sprintf("task without log file, log_in_storage=%t", inStorage), func(t *testing.T) {
-				actionTask.LogFilename = ""
-				actionTask.LogInStorage = inStorage
+		// A task whose named log file is gone answers the same, and neither answer
+		// may carry the path of that file.
+		for _, tc := range []struct {
+			name      string
+			filename  string
+			inStorage bool
+		}{
+			{"task without log file", "", false},
+			{"task without log file", "", true},
+			{"task with a missing log file", "missing/00/1.log.zst", false},
+			{"task with a missing log file", "missing/00/1.log.zst", true},
+		} {
+			t.Run(fmt.Sprintf("%s, log_in_storage=%t", tc.name, tc.inStorage), func(t *testing.T) {
+				actionTask.LogFilename = tc.filename
+				actionTask.LogInStorage = tc.inStorage
 				_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
 				require.NoError(t, err)
+
+				assertNoPath := func(t *testing.T, body string) {
+					t.Helper()
+					assert.Equal(t, actions.LogNotFoundMessage, strings.TrimSpace(body))
+					if tc.filename != "" {
+						assert.NotContains(t, body, tc.filename)
+					}
+				}
 
 				t.Run("job log: 404", func(t *testing.T) {
 					req := NewRequestf(t, "GET",
@@ -361,7 +382,11 @@ jobs:
 						repoA.FullName(), jobID,
 					)
 					req.AddTokenAuth(token)
-					MakeRequest(t, req, http.StatusNotFound)
+					resp := MakeRequest(t, req, http.StatusNotFound)
+
+					var apiError api.APIError
+					DecodeJSON(t, resp, &apiError)
+					assertNoPath(t, apiError.Message)
 				})
 
 				t.Run("run logs zip: MISSING entry, no PARTIAL", func(t *testing.T) {
@@ -380,6 +405,13 @@ jobs:
 						names = append(names, f.Name)
 					}
 					require.Equal(t, []string{fmt.Sprintf("%s-%d-attempt-%d.MISSING", job.Name, job.ID, job.Attempt)}, names)
+
+					marker, err := r.File[0].Open()
+					require.NoError(t, err)
+					defer marker.Close()
+					text, err := io.ReadAll(marker)
+					require.NoError(t, err)
+					assertNoPath(t, string(text))
 				})
 			})
 		}
