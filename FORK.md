@@ -66,8 +66,10 @@ backup gate and pin history.
   empty filename instead of opening the storage root. So
   `GET .../actions/jobs/{job_id}/logs` answers 404, not 500, because
   `GetActionJobLogs` also maps `os.ErrNotExist`, and the run-logs ZIP writes a
-  `.MISSING` entry for the job. Drop the carry when upstream handles the same
-  case; as of `v17.0.1` it does not.
+  `.MISSING` entry for the job. The web log download
+  (`.../actions/runs/{run}/jobs/{job}/attempt/{attempt}/logs`) maps it to 404 as
+  well. Drop the carry when upstream handles the same case; as of `v17.0.1` it
+  does not.
 - Required status check patterns (`status_check_contexts`) are validated and
   the merge gate fails closed. `CompileStatusCheckPattern` in
   `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
