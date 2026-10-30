@@ -6,6 +6,7 @@ package repo
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"forgejo.org/models"
@@ -588,6 +589,10 @@ func CreateBranchProtection(ctx *context.APIContext) {
 		return
 	}
 
+	if !validateStatusCheckContexts(ctx, form.StatusCheckContexts) {
+		return
+	}
+
 	isPlainRule := !git_model.IsRuleNameSpecial(ruleName)
 	var isBranchExist bool
 	if isPlainRule {
@@ -749,6 +754,18 @@ func CreateBranchProtection(ctx *context.APIContext) {
 	ctx.JSON(http.StatusCreated, convert.ToBranchProtection(ctx, bp, repo))
 }
 
+// validateStatusCheckContexts answers 422 for the first required status check
+// pattern that cannot be used and reports whether the request may continue.
+func validateStatusCheckContexts(ctx *context.APIContext, patterns []string) bool {
+	for _, pattern := range patterns {
+		if _, err := git_model.CompileStatusCheckPattern(pattern); err != nil {
+			ctx.Error(http.StatusUnprocessableEntity, "InvalidStatusCheckPattern", fmt.Errorf("invalid status check pattern %q: %w", pattern, err))
+			return false
+		}
+	}
+	return true
+}
+
 // EditBranchProtection edits a branch protection for a repo
 func EditBranchProtection(ctx *context.APIContext) {
 	// swagger:operation PATCH /repos/{owner}/{repo}/branch_protections/{name} repository repoEditBranchProtection
@@ -830,6 +847,9 @@ func EditBranchProtection(ctx *context.APIContext) {
 	}
 
 	if form.StatusCheckContexts != nil {
+		if !validateStatusCheckContexts(ctx, form.StatusCheckContexts) {
+			return
+		}
 		protectBranch.StatusCheckContexts = form.StatusCheckContexts
 	}
 

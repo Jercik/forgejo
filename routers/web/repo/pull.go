@@ -58,8 +58,6 @@ import (
 	notify_service "forgejo.org/services/notify"
 	pull_service "forgejo.org/services/pull"
 	repo_service "forgejo.org/services/repository"
-
-	"github.com/gobwas/glob"
 )
 
 const (
@@ -739,12 +737,14 @@ func PrepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 				if c == context {
 					return true
 				}
-				if gp, err := glob.Compile(c); err != nil {
+				if gp, err := git_model.CompileStatusCheckPattern(c); err != nil {
 					// All newly created status_check_contexts are checked to ensure they are valid glob expressions before being stored in the database.
 					// But some old status_check_context created before glob was introduced may be invalid glob expressions.
 					// So log the error here for debugging.
 					log.Error("compile glob %q: %v", c, err)
-				} else if gp.Match(context) {
+				} else if matched, err := gp.Match(context); err != nil {
+					log.Error("%v", err)
+				} else if matched {
 					return true
 				}
 			}
@@ -816,14 +816,15 @@ func PrepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 }
 
 func createRequiredContextMatcher(requiredContext string) func(string) bool {
-	if gp, err := glob.Compile(requiredContext); err == nil {
-		return func(contextToCheck string) bool {
-			return gp.Match(contextToCheck)
-		}
+	gp, err := git_model.CompileStatusCheckPattern(requiredContext)
+	if err != nil {
+		// The merge check rejects an unusable pattern, so no status can satisfy it.
+		return func(string) bool { return false }
 	}
 
 	return func(contextToCheck string) bool {
-		return requiredContext == contextToCheck
+		matched, err := gp.Match(contextToCheck)
+		return err == nil && matched
 	}
 }
 

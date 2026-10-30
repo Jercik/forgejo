@@ -2,7 +2,7 @@
 
 This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.0`
 (`0d791421f85ca13a63b665053d81ea765fbbc571`). The latest release is
-`v17.0.0-j4k.2`, published as `ghcr.io/jercik/forgejo:17.0.0-j4k.2-rootless`.
+`v17.0.0-j4k.3`, published as `ghcr.io/jercik/forgejo:17.0.0-j4k.3-rootless`.
 
 ## Branch model
 
@@ -54,6 +54,19 @@ reachable after a rebase.
   a log file (the placeholder task of a reusable-workflow outer job), because
   `GetActionJobLogs` also maps `os.ErrNotExist`. Drop the carry when upstream
   maps the same error; as of `v17.0.0` it does not.
+- Required status check patterns (`status_check_contexts`) are validated and
+  the merge gate fails closed. `CompileStatusCheckPattern` in
+  `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
+  compile (an unclosed `[`) and one that compiles into a matcher that panics
+  when it matches (an unclosed `{`, an empty `{}` or `{,}`, or an empty
+  alternative after an unbounded one, as in `{x*,}`). Creating or editing a branch
+  protection through the API answers 422 naming the pattern, and the web form
+  runs the same check. `MergeRequiredContextsCommitStatus` returns `failure` for
+  a stored pattern that fails the check or panics, whereas upstream logs and
+  drops an uncompilable pattern, so that check stops gating, and answers 500 on
+  a panicking one. Drop the carry when upstream validates the patterns on the
+  API and the merge gate fails closed; as of upstream `v17.0.1` and `forgejo`
+  main, it does not.
 
 ## Temporary upstream backports
 

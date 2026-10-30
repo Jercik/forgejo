@@ -264,6 +264,47 @@ func TestAPIBranchProtection(t *testing.T) {
 	testAPIDeleteBranch(t, "branch2", http.StatusNoContent)
 }
 
+func TestAPIBranchProtectionRejectsUnusableStatusCheckPattern(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	token := getUserToken(t, "user2", auth_model.AccessTokenScopeWriteRepository)
+
+	for _, pattern := range []string{"lint [broken", "a{,"} {
+		t.Run(pattern, func(t *testing.T) {
+			req := NewRequestWithJSON(t, "POST", "/api/v1/repos/user2/repo1/branch_protections", &api.BranchProtection{
+				RuleName:            "master",
+				EnableStatusCheck:   true,
+				StatusCheckContexts: []string{"test1", pattern},
+			}).AddTokenAuth(token)
+			resp := MakeRequest(t, req, http.StatusUnprocessableEntity)
+			var apiError api.APIError
+			DecodeJSON(t, resp, &apiError)
+			assert.Contains(t, apiError.Message, `invalid status check pattern "`+pattern+`"`)
+			testAPIGetBranchProtection(t, "master", http.StatusNotFound)
+		})
+	}
+
+	testAPICreateBranchProtection(t, "master", http.StatusCreated)
+	testAPIEditBranchProtection(t, "master", &api.BranchProtection{
+		EnableStatusCheck:   true,
+		StatusCheckContexts: []string{"test1"},
+	}, http.StatusOK)
+
+	for _, pattern := range []string{"lint [broken", "a{,"} {
+		t.Run("edit "+pattern, func(t *testing.T) {
+			req := NewRequestWithJSON(t, "PATCH", "/api/v1/repos/user2/repo1/branch_protections/master", &api.BranchProtection{
+				StatusCheckContexts: []string{"test1", pattern},
+			}).AddTokenAuth(token)
+			resp := MakeRequest(t, req, http.StatusUnprocessableEntity)
+			var apiError api.APIError
+			DecodeJSON(t, resp, &apiError)
+			assert.Contains(t, apiError.Message, `invalid status check pattern "`+pattern+`"`)
+			bp := testAPIGetBranchProtection(t, "master", http.StatusOK)
+			assert.Equal(t, []string{"test1"}, bp.StatusCheckContexts)
+		})
+	}
+}
+
 func TestAPICreateBranchWithSyncBranches(t *testing.T) {
 	onApplicationRun(t, func(t *testing.T, giteaURL *url.URL) {
 		unittest.AssertCount(t, &git_model.Branch{RepoID: 1}, 4)
