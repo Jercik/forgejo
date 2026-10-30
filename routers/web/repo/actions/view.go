@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -611,7 +612,10 @@ func Logs(ctx *app_context.Context) {
 	}
 
 	reader, err := actions.OpenLogs(ctx, task.LogInStorage, task.LogFilename)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		ctx.Error(http.StatusNotFound, "log file not found")
+		return
+	} else if err != nil {
 		ctx.Error(http.StatusInternalServerError, err.Error())
 		return
 	}

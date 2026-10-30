@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	actions_model "forgejo.org/models/actions"
 	auth_model "forgejo.org/models/auth"
+	"forgejo.org/models/db"
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
@@ -156,6 +158,68 @@ jobs:
 				}
 
 				resetFunc()
+			})
+		}
+
+		httpContext := NewAPITestContext(t, user2.Name, repo.Name, auth_model.AccessTokenScopeWriteUser)
+		doAPIDeleteRepository(httpContext)(t)
+	})
+}
+
+func TestActionsDownloadTaskLogsWithoutLogFile(t *testing.T) {
+	if !setting.Database.Type.IsSQLite3() {
+		t.Skip()
+	}
+	treePath := ".gitea/workflows/download-task-logs-without-log-file.yml"
+	fileContent := `name: download-task-logs-without-log-file
+on:
+  push:
+    paths:
+      - '.gitea/workflows/download-task-logs-without-log-file.yml'
+jobs:
+    job1:
+      runs-on: ubuntu-latest
+      steps:
+        - run: echo job1
+`
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		session := loginUser(t, user2.Name)
+		token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
+
+		apiRepo := createActionsTestRepo(t, token, "actions-download-task-logs-without-log-file", false)
+		repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: apiRepo.ID})
+		runner := newMockRunner()
+		runner.registerAsRepoRunner(t, user2.Name, repo.Name, "mock-runner", []string{"ubuntu-latest"})
+
+		opts := getWorkflowCreateFileOptions(user2, repo.DefaultBranch, fmt.Sprintf("create %s", treePath), fileContent)
+		createWorkflowFile(t, token, user2.Name, repo.Name, treePath, opts)
+
+		task := runner.fetchTask(t)
+		runner.execTask(t, task, &mockTaskOutcome{
+			result: runnerv1.Result_RESULT_SUCCESS,
+			logRows: []*runnerv1.LogRow{
+				{Time: timestamppb.New(time.Now()), Content: "job1"},
+			},
+		})
+
+		runIndex := task.Context.GetFields()["run_number"].GetStringValue()
+		attempt := task.Context.GetFields()["run_attempt"].GetStringValue()
+		logURL := fmt.Sprintf("/%s/%s/actions/runs/%s/jobs/0/attempt/%s/logs", user2.Name, repo.Name, runIndex, attempt)
+
+		// The placeholder task of a reusable-workflow outer job never gets a log
+		// file. The transfer cron job later sets log_in_storage on it all the same.
+		actionTask := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionTask{ID: task.Id})
+		for _, inStorage := range []bool{false, true} {
+			t.Run(fmt.Sprintf("log_in_storage=%t", inStorage), func(t *testing.T) {
+				actionTask.LogFilename = ""
+				actionTask.LogInStorage = inStorage
+				_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
+				require.NoError(t, err)
+
+				req := NewRequest(t, "GET", logURL)
+				req.AddTokenAuth(token)
+				MakeRequest(t, req, http.StatusNotFound)
 			})
 		}
 

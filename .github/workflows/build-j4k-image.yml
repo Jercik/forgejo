@@ -26,6 +26,7 @@ jobs:
             TestVersion
             TestActionsAPIRerunFailedJobs
             TestAPIGetActionJobLogs
+            TestActionsDownloadTaskLogsWithoutLogFile
             TestAPIBranchProtectionRejectsUnusableStatusCheckPattern
             TestProtectedBranch_RejectsUnusableStatusCheckPattern
           )
