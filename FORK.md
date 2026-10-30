@@ -1,18 +1,25 @@
 # The j4k Forgejo fork
 
-This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.0`
-(`0d791421f85ca13a63b665053d81ea765fbbc571`). The latest release is
-`v17.0.0-j4k.3`, published as `ghcr.io/jercik/forgejo:17.0.0-j4k.3-rootless`.
+This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.1`
+(`363f3dc30beef902b187af5a5244ff7af44901e6`). The latest release is
+`v17.0.1-j4k.1`, published as `ghcr.io/jercik/forgejo:17.0.1-j4k.1-rootless`.
 
 ## Branch model
 
-`v17.0/j4k` is rebase-managed: it is the upstream release tag, then temporary
-backports, then one commit per carry. Bumping the base means rebasing those carry commits
+`v17.0/j4k` is rebase-managed: it is the upstream release tag, then any temporary
+upstream backports, then one commit per carry. Bumping the base means rebasing those carry commits
 onto the new upstream tag and force-pushing the branch with `--force-with-lease`;
 never merge or squash-merge upstream history into it, because a squash turns the
 whole upstream delta into one fork commit and hides the real merge-base.
 Release tags `v<upstream>-j4k.N` are immutable and keep every shipped state
 reachable after a rebase.
+
+The upstream `v17.0.0` to `v17.0.1` delta adds no `models/forgejo_migrations`
+migrations, and the fork delta adds none. Whether a given bump needs the
+cluster's coordinated database and data-volume restore for rollback depends on
+the upstream delta it carries, not on the fork patches. See the cluster's
+`docs/adr/0010-forgejo-fork-image.md` and `roles/forgejo/README.md` for the
+backup gate and pin history.
 
 ## Carries
 
@@ -20,7 +27,7 @@ reachable after a rebase.
   `DELETE /repos/{owner}/{repo}/pulls/{index}/reviews/{id}/comments/{comment}/resolution`.
   Actions job tokens are allowed and checked against the task's own repository
   permission. Drop this carry when the pinned upstream release ships an
-  equivalent API; as of `v17.0.0`, upstream still has none.
+  equivalent API; as of `v17.0.1`, upstream still has none.
 - Pending reviews remain scoped to the negative synthetic Actions reviewer ID
   (`FindReviewOptions.ReviewerID != 0` instead of `> 0`). The
   `actions-reviewer-isolation` version capability advertises this guarantee.
@@ -30,7 +37,7 @@ reachable after a rebase.
   the filter and dismisses every undismissed review on the PR, whereas the fork
   dismisses only that reviewer's reviews.
   Drop the carry when upstream provides and tests the same isolation; as of
-  `v17.0.0`, upstream still filters on `ReviewerID > 0`.
+  `v17.0.1`, upstream still filters on `ReviewerID > 0`.
 - The `POST .../actions/runs/{run_id}/rerun-failed-jobs` endpoint and the
   `actions-rerun` capability. The run rerun (`.../runs/{run_id}/rerun`) and job
   rerun (`.../jobs/{job_id}/rerun`) endpoints come from upstream since
@@ -43,17 +50,17 @@ reachable after a rebase.
   on a nil blob in `services/packages/container/blob.go`. The manifest and blob
   writes now run in `db.RetryTx`, and cleanup deletes only content that the
   attempt's own insert created, never the winner's file. Drop the carry when
-  upstream makes these writes idempotent; as of `v17.0.0` it does not.
+  upstream makes these writes idempotent; as of `v17.0.1` it does not.
 - Release creation tolerates the background tag sync. `insertRelease` in
   `services/release/release.go` adopts a tag-only row that the sync wrote
   between the existence check and the insert, instead of answering 500 on
   `UQE_release_n`. A regular release at the tag still yields
   `ErrReleaseAlreadyExist`. Drop the carry when upstream handles the same race;
-  as of `v17.0.0` it does not.
+  as of `v17.0.1` it does not.
 - `GET .../actions/jobs/{job_id}/logs` answers 404, not 500, for a task without
   a log file (the placeholder task of a reusable-workflow outer job), because
   `GetActionJobLogs` also maps `os.ErrNotExist`. Drop the carry when upstream
-  maps the same error; as of `v17.0.0` it does not.
+  maps the same error; as of `v17.0.1` it does not.
 - Required status check patterns (`status_check_contexts`) are validated and
   the merge gate fails closed. `CompileStatusCheckPattern` in
   `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
@@ -67,25 +74,6 @@ reachable after a rebase.
   a panicking one. Drop the carry when upstream validates the patterns on the
   API and the merge gate fails closed; as of upstream `v17.0.1` and `forgejo`
   main, it does not.
-
-## Temporary upstream backports
-
-Two fixes merged on upstream `v17.0/forgejo` after the `v17.0.0` tag are carried verbatim as the first commits on this branch, because `v17.0.0` as tagged regresses this deployment and `v16.0` reaches end of life on 2026-10-29:
-
-- `git(config): fix configUnsetAll receive.hideRefs` (upstream #14870, commit 77986c1125): `v17.0.0` writes an empty `receive.hideRefs` on every startup, after which pull request merges fail with "cannot lock ref".
-- `fix: don't attempt to transfer Actions logs to storage when already transferred` (upstream #14855, commit 37e48731a3): a retried final log upload fails, so a job reports as failed minutes later and jobs that need it stay blocked.
-
-Drop both when rebasing onto `v17.0.1` or any later tag that contains them (check with `git merge-base --is-ancestor <sha> <tag>`). They are the only exception to the branch model above.
-
-The upstream `v16.0.6` to `v17.0.0` delta adds six `models/forgejo_migrations`
-migrations: `v17a_add_action_task_step_summary`, `v17a_add_invite_expiry_date`,
-`v17a_add_job_namespace`, `v17a_add_package_cleanup_based_on_last_download`,
-`v17a_add_package_version_last_downloaded` and
-`v17a_add_package_version_total_size`. The fork delta itself adds none. Whether
-a given bump needs the cluster's coordinated database and data-volume restore
-for rollback depends on the upstream delta it carries, not on the fork patches.
-See the cluster's `docs/adr/0010-forgejo-fork-image.md` and
-`roles/forgejo/README.md` for the backup gate and pin history.
 
 ## Release flow
 
