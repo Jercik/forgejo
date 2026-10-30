@@ -57,10 +57,15 @@ backup gate and pin history.
   `UQE_release_n`. A regular release at the tag still yields
   `ErrReleaseAlreadyExist`. Drop the carry when upstream handles the same race;
   as of `v17.0.1` it does not.
-- `GET .../actions/jobs/{job_id}/logs` answers 404, not 500, for a task without
-  a log file (the placeholder task of a reusable-workflow outer job), because
-  `GetActionJobLogs` also maps `os.ErrNotExist`. Drop the carry when upstream
-  maps the same error; as of `v17.0.1` it does not.
+- A task without a log file (the placeholder task of a reusable-workflow outer
+  job, whose `LogFilename` is empty) has no log, whatever `LogInStorage` says:
+  upstream's `transfer_lingering_logs` cron job sets that flag on any finished
+  task. `OpenLogs` in `modules/actions/log.go` returns `os.ErrNotExist` for an
+  empty filename instead of opening the storage root. So
+  `GET .../actions/jobs/{job_id}/logs` answers 404, not 500, because
+  `GetActionJobLogs` also maps `os.ErrNotExist`, and the run-logs ZIP writes a
+  `.MISSING` entry for the job. Drop the carry when upstream handles the same
+  case; as of `v17.0.1` it does not.
 - Required status check patterns (`status_check_contexts`) are validated and
   the merge gate fails closed. `CompileStatusCheckPattern` in
   `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
