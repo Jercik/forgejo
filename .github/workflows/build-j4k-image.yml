@@ -36,8 +36,14 @@ jobs:
             TestAPIBranchProtection # CreateBranchProtection, EditBranchProtection
             TestAPIBranchProtectionRejectsUnusableStatusCheckPattern
             TestProtectedBranch_RejectsUnusableStatusCheckPattern
+            TestActionsAPIGetListActionRun # ListActionRuns
+            TestActionsJobWithNeeds # ListActionTasks
+            TestActionsJobNeedsMatrix # ListActionTasks
+            TestActionsAPIListActionRunsDefaultsToFirstPage
+            TestActionsAPIListActionTasksDefaultsToFirstPage
           )
           unit=(
+            TestActions # ListActionRuns, ListActionTasks
             TestFindReviews # FindReviewOptions.toCond
             TestGetCurrentReview # FindReviewOptions.toCond
             TestGetCurrentReviewActionsUser

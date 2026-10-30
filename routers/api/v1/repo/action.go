@@ -759,8 +759,12 @@ func ListActionTasks(ctx *context.APIContext) {
 		}
 	}
 
+	// FindAndCount applies no limit to a page below 1, which would list every task.
+	listOptions := utils.GetListOptions(ctx)
+	listOptions.SetDefaultValues()
+
 	tasks, total, err := db.FindAndCount[actions_model.ActionTask](ctx, &actions_model.FindTaskOptions{
-		ListOptions: utils.GetListOptions(ctx),
+		ListOptions: listOptions,
 		RepoID:      ctx.Repo().Repository.ID,
 		Status:      statuses,
 	})
@@ -950,8 +954,12 @@ func ListActionRuns(ctx *context.APIContext) {
 		}
 	}
 
+	// FindAndCount applies no limit to a page below 1, which would list every run.
+	listOptions := utils.GetListOptions(ctx)
+	listOptions.SetDefaultValues()
+
 	runs, total, err := db.FindAndCount[actions_model.ActionRun](ctx, &actions_model.FindRunOptions{
-		ListOptions: utils.GetListOptions(ctx),
+		ListOptions: listOptions,
 		OwnerID:     ctx.Repo().Owner.ID,
 		RepoID:      ctx.Repo().Repository.ID,
 		Events:      ctx.FormStrings("event"),

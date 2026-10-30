@@ -90,6 +90,16 @@ backup gate and pin history.
   a panicking one. Drop the carry when upstream validates the patterns on the
   API and the merge gate fails closed; as of upstream `v17.0.1` and `forgejo`
   main, it does not.
+- `GET .../actions/runs` and `GET .../actions/tasks` always paginate.
+  `ListActionRuns` and `ListActionTasks` in `routers/api/v1/repo/action.go` call
+  `SetDefaultValues` on their list options, so a missing, `0`, negative, or
+  non-numeric `page` means page 1 and the response holds at most `limit` entries.
+  `limit` is clamped as before, and `total_count` still reports the full count.
+  Upstream's `db.FindAndCount` applies no limit to a page below 1 and lists
+  every row, which loads and converts all of them: 717 MB for a repository with
+  49,488 runs (forgejo#9783). Only these two handlers change; other list
+  endpoints keep their behavior. Drop the carry when the pinned upstream release
+  ships forgejo PR #13960 or an equivalent fix; as of `v17.0.1` it does not.
 
 ## Release flow
 
