@@ -1,8 +1,10 @@
 # The j4k Forgejo fork
 
 This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.1`
-(`363f3dc30beef902b187af5a5244ff7af44901e6`). The latest release is
-`v17.0.1-j4k.1`, published as `ghcr.io/jercik/forgejo:17.0.1-j4k.1-rootless`.
+(`363f3dc30beef902b187af5a5244ff7af44901e6`). A release is a tag
+`v<upstream>-j4k.N`, published as `ghcr.io/jercik/forgejo:<upstream>-j4k.N-rootless`
+(the image tag drops the `v`). The tags, not this file, say which release is the
+latest.
 
 ## Branch model
 
