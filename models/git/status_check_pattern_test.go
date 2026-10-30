@@ -18,6 +18,8 @@ func TestCompileStatusCheckPattern(t *testing.T) {
 		"Lint / {yamllint,yaml-lint} (pull_request)",
 		"Validate / contract (pull_request{,_target})",
 		"{a,b}",
+		"Build{, *} (push)",
+		"a{b,c}d",
 	}
 	for _, pattern := range valid {
 		t.Run("valid "+pattern, func(t *testing.T) {
@@ -35,6 +37,12 @@ func TestCompileStatusCheckPattern(t *testing.T) {
 		"a{}",
 		"a{,}",
 		"{a*,a",
+		"a{}b",
+		"{*,}{}a",
+		"lint{ *,}{-*,} (push)",
+		"*éx{}?*",
+		"*{?[!x]}{}?*",
+		"*ł / lint{}x",
 	}
 	for _, pattern := range invalid {
 		t.Run("invalid "+pattern, func(t *testing.T) {
@@ -78,7 +86,7 @@ func TestStatusCheckPatternMatchReturnsPanicAsError(t *testing.T) {
 // every subject without panicking.
 func TestCompileStatusCheckPatternRejectsEveryPanickingPattern(t *testing.T) {
 	patterns := allStrings("a{},*?[]", 4)
-	subjects := allStrings("a,{}", 4)
+	subjects := allStrings("a,{}é", 4)
 
 	for _, pattern := range patterns {
 		p, err := CompileStatusCheckPattern(pattern)

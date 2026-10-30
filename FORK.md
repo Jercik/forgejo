@@ -58,7 +58,8 @@ reachable after a rebase.
   the merge gate fails closed. `CompileStatusCheckPattern` in
   `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
   compile (an unclosed `[`) and one that compiles into a matcher that panics
-  when it matches (`a{,`, `a{}`, an unclosed `{`). Creating or editing a branch
+  when it matches (an unclosed `{`, an empty `{}` or `{,}`, or an empty
+  alternative after an unbounded one, as in `{x*,}`). Creating or editing a branch
   protection through the API answers 422 naming the pattern, and the web form
   runs the same check. `MergeRequiredContextsCommitStatus` returns `failure` for
   a stored pattern that fails the check or panics, whereas upstream logs and

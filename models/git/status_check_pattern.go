@@ -27,8 +27,8 @@ func CompileStatusCheckPattern(pattern string) (*StatusCheckPattern, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m, ok := g.(match.Matcher); ok && hasEmptyRowTail(m) {
-		return nil, errors.New(`its matcher would panic, check for an unclosed or empty "{...}"`)
+	if m, ok := g.(match.Matcher); ok && hasEmptyRowElement(m) {
+		return nil, errors.New(`has an unclosed "{" or an empty "{...}" alternative that the glob library cannot match; for an optional part, write the empty alternative first, as in "{,_target}"`)
 	}
 	return &StatusCheckPattern{pattern: pattern, glob: g}, nil
 }
@@ -46,33 +46,39 @@ func (p *StatusCheckPattern) Match(statusContext string) (matched bool, err erro
 	return p.glob.Match(statusContext), nil
 }
 
-// hasEmptyRowTail reports whether m contains a fixed-length sequence of
-// matchers (match.Row) that ends in a matcher of length zero. Once the earlier
-// matchers have consumed all of the subject, the sequence slices past its end
-// (gobwas/glob v0.2.3 match/row.go matchAll), so Match panics for exactly the
-// subjects the sequence would otherwise accept. An empty alternation, `{}` or
-// `{,}`, compiles to such a matcher, and so does an unclosed `{`, which
-// gobwas/glob accepts as an alternation that runs to the end of the pattern.
-func hasEmptyRowTail(m match.Matcher) bool {
+// hasEmptyRowElement reports whether m contains a fixed-length sequence of
+// matchers (match.Row) with an element of length zero. gobwas/glob v0.2.3
+// match/row.go matchAll slices the subject by the summed element lengths, so
+// once the earlier elements have consumed all of it, a zero-length element
+// slices past its end and Match panics. Elements before the last one reach this
+// state too: AnyOf.Len() reports the length of a later alternative when the
+// first is unbounded, and Row.Index measures the subject in bytes, not
+// characters. An empty alternation, `{}` or `{,}`, compiles to such an element,
+// and so does an unclosed `{`, which gobwas/glob accepts as an alternation that
+// runs to the end of the pattern. A sequence with a zero-length element can
+// only report no match or panic, so rejecting it loses no usable pattern.
+func hasEmptyRowElement(m match.Matcher) bool {
 	switch v := m.(type) {
 	case match.Row:
-		if n := len(v.Matchers); n > 0 && v.Matchers[n-1].Len() == 0 {
-			return true
+		for _, element := range v.Matchers {
+			if element.Len() == 0 {
+				return true
+			}
 		}
-		return anyHasEmptyRowTail(v.Matchers...)
+		return anyHasEmptyRowElement(v.Matchers...)
 	case match.AnyOf:
-		return anyHasEmptyRowTail(v.Matchers...)
+		return anyHasEmptyRowElement(v.Matchers...)
 	case match.EveryOf:
-		return anyHasEmptyRowTail(v.Matchers...)
+		return anyHasEmptyRowElement(v.Matchers...)
 	case match.BTree:
-		return anyHasEmptyRowTail(v.Value, v.Left, v.Right)
+		return anyHasEmptyRowElement(v.Value, v.Left, v.Right)
 	}
 	return false
 }
 
-func anyHasEmptyRowTail(matchers ...match.Matcher) bool {
+func anyHasEmptyRowElement(matchers ...match.Matcher) bool {
 	for _, m := range matchers {
-		if m != nil && hasEmptyRowTail(m) {
+		if m != nil && hasEmptyRowElement(m) {
 			return true
 		}
 	}

@@ -24,6 +24,8 @@ jobs:
           make 'test-sqlite#TestAPIBranchProtectionRejectsUnusableStatusCheckPattern'
           make 'test-sqlite#TestProtectedBranch_RejectsUnusableStatusCheckPattern'
           make 'test#TestRerunFailedJobs'
+          make 'test#TestMergeRequiredContextsCommitStatus'
+          make 'test#StatusCheckPattern'
         env:
           TAGS: sqlite sqlite_unlock_notify
         timeout-minutes: 40
