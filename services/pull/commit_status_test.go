@@ -61,3 +61,25 @@ func TestMergeRequiredContextsCommitStatus(t *testing.T) {
 		assert.Equal(t, testCasesExpected[i], MergeRequiredContextsCommitStatus(commitStatuses, testCasesRequiredContexts[i]), "Test case %d failed", i+1)
 	}
 }
+
+func TestMergeRequiredContextsCommitStatusBlocksOnUnusablePattern(t *testing.T) {
+	commitStatuses := []*git_model.CommitStatus{
+		{Context: "a", State: structs.CommitStatusSuccess},
+		{Context: "lint", State: structs.CommitStatusSuccess},
+	}
+
+	testCases := []struct {
+		description      string
+		requiredContexts []string
+	}{
+		{"an uncompilable pattern beside a satisfied one", []string{"a", "lint [broken"}},
+		{"only an uncompilable pattern", []string{"lint [broken"}},
+		{"a pattern whose matcher panics", []string{"a{,"}},
+		{"a pattern whose matcher panics beside a satisfied one", []string{"lint", "a{,"}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.description, func(t *testing.T) {
+			assert.Equal(t, structs.CommitStatusFailure, MergeRequiredContextsCommitStatus(commitStatuses, testCase.requiredContexts))
+		})
+	}
+}

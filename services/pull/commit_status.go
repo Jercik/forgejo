@@ -15,8 +15,6 @@ import (
 	"forgejo.org/modules/gitrepo"
 	"forgejo.org/modules/log"
 	"forgejo.org/modules/structs"
-
-	"github.com/gobwas/glob"
 )
 
 // MergeRequiredContextsCommitStatus returns a commit status state for given required contexts
@@ -26,19 +24,26 @@ func MergeRequiredContextsCommitStatus(commitStatuses []*git_model.CommitStatus,
 	returnedStatus := structs.CommitStatusSuccess
 
 	if len(requiredContexts) > 0 {
-		requiredContextsGlob := make(map[string]glob.Glob, len(requiredContexts))
+		requiredContextsGlob := make(map[string]*git_model.StatusCheckPattern, len(requiredContexts))
 		for _, ctx := range requiredContexts {
-			if gp, err := glob.Compile(ctx); err != nil {
-				log.Error("glob.Compile %s failed. Error: %v", ctx, err)
-			} else {
-				requiredContextsGlob[ctx] = gp
+			gp, err := git_model.CompileStatusCheckPattern(ctx)
+			if err != nil {
+				// Dropping the pattern would let the merge pass without the check it names.
+				log.Error("Required status check pattern %q is unusable, blocking the merge: %v", ctx, err)
+				return structs.CommitStatusFailure
 			}
+			requiredContextsGlob[ctx] = gp
 		}
 
 		for _, gp := range requiredContextsGlob {
 			var targetStatus structs.CommitStatusState
 			for _, commitStatus := range commitStatuses {
-				if gp.Match(commitStatus.Context) {
+				matched, err := gp.Match(commitStatus.Context)
+				if err != nil {
+					log.Error("Required status check pattern failed, blocking the merge: %v", err)
+					return structs.CommitStatusFailure
+				}
+				if matched {
 					if targetStatus == "" {
 						targetStatus = commitStatus.State
 					} else if commitStatus.State.NoBetterThan(targetStatus) {

@@ -22,8 +22,6 @@ import (
 	"forgejo.org/services/forms"
 	pull_service "forgejo.org/services/pull"
 	"forgejo.org/services/repository"
-
-	"github.com/gobwas/glob"
 )
 
 const (
@@ -201,7 +199,7 @@ func SettingsProtectedBranchPost(ctx *context.Context) {
 			if trimmed == "" {
 				continue
 			}
-			if _, err := glob.Compile(trimmed); err != nil {
+			if _, err := git_model.CompileStatusCheckPattern(trimmed); err != nil {
 				ctx.Flash.Error(ctx.Tr("repo.settings.protect_invalid_status_check_pattern", pattern))
 				ctx.Redirect(fmt.Sprintf("%s/settings/branches/edit?rule_name=%s", ctx.Repo.RepoLink, url.QueryEscape(protectBranch.RuleName)))
 				return

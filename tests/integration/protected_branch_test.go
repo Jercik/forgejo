@@ -82,3 +82,27 @@ func TestProtectedBranch_AdminEnforcement(t *testing.T) {
 		})
 	})
 }
+
+func TestProtectedBranch_RejectsUnusableStatusCheckPattern(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	session := loginUser(t, "user2")
+	rule := func(contexts string) map[string]string {
+		return map[string]string{
+			"rule_name":             "release/*",
+			"enable_status_check":   "true",
+			"status_check_contexts": contexts,
+		}
+	}
+
+	for _, pattern := range []string{"lint [broken", "a{,"} {
+		req := NewRequestWithValues(t, "POST", "/user2/repo1/settings/branches/edit", rule("test1\n"+pattern))
+		resp := session.MakeRequest(t, req, http.StatusSeeOther)
+		assert.Contains(t, resp.Header().Get("Location"), "/settings/branches/edit?rule_name=release")
+		unittest.AssertNotExistsBean(t, &git_model.ProtectedBranch{RepoID: 1, RuleName: "release/*"})
+	}
+
+	req := NewRequestWithValues(t, "POST", "/user2/repo1/settings/branches/edit", rule("test1\nlint {a,b}"))
+	session.MakeRequest(t, req, http.StatusSeeOther)
+	unittest.AssertExistsAndLoadBean(t, &git_model.ProtectedBranch{RepoID: 1, RuleName: "release/*"})
+}
