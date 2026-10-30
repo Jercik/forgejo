@@ -361,6 +361,88 @@ func TestActionsAPIGetListActionRun(t *testing.T) {
 	}
 }
 
+func TestActionsAPIListActionRunsDefaultsToFirstPage(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	// Repository 63 has three runs. The list is newest first: 894, 893, 892.
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 63})
+	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
+	token := getUserToken(t, user.LowerName, auth_model.AccessTokenScopeReadRepository)
+
+	testqueries := []struct {
+		name       string
+		query      string
+		expectedID int64
+	}{
+		{name: "page missing", query: "?limit=1", expectedID: 894},
+		{name: "page 0", query: "?limit=1&page=0", expectedID: 894},
+		{name: "page -1", query: "?limit=1&page=-1", expectedID: 894},
+		{name: "page not a number", query: "?limit=1&page=first", expectedID: 894},
+		{name: "page 2", query: "?limit=1&page=2", expectedID: 893},
+	}
+
+	for _, tt := range testqueries {
+		t.Run(tt.name, func(t *testing.T) {
+			req := NewRequest(t, http.MethodGet,
+				fmt.Sprintf("/api/v1/repos/%s/actions/runs%s", repo.FullName(), tt.query),
+			)
+			req.AddTokenAuth(token)
+
+			res := MakeRequest(t, req, http.StatusOK)
+			apiRuns := new(api.ListActionRunResponse)
+			DecodeJSON(t, res, apiRuns)
+
+			assert.Equal(t, int64(3), apiRuns.TotalCount)
+			require.Len(t, apiRuns.Entries, 1)
+			assert.Equal(t, tt.expectedID, apiRuns.Entries[0].ID)
+		})
+	}
+}
+
+func TestActionsAPIListActionTasksDefaultsToFirstPage(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+
+	// Repository 4 has twelve tasks, tasks 46 to 57. The list is newest first.
+	// Task 46 has no job, and converting it for the response fails, so the
+	// listing needs a job for it to list every task.
+	task46 := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionTask{ID: 46})
+	task46.JobID = 192
+	require.NoError(t, actions_model.UpdateTask(t.Context(), task46, "job_id"))
+
+	repo := unittest.AssertExistsAndLoadBean(t, &repo_model.Repository{ID: 4})
+	user := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: repo.OwnerID})
+	token := getUserToken(t, user.LowerName, auth_model.AccessTokenScopeReadRepository)
+
+	testqueries := []struct {
+		name       string
+		query      string
+		expectedID int64
+	}{
+		{name: "page missing", query: "?limit=1", expectedID: 57},
+		{name: "page 0", query: "?limit=1&page=0", expectedID: 57},
+		{name: "page -1", query: "?limit=1&page=-1", expectedID: 57},
+		{name: "page not a number", query: "?limit=1&page=first", expectedID: 57},
+		{name: "page 2", query: "?limit=1&page=2", expectedID: 56},
+	}
+
+	for _, tt := range testqueries {
+		t.Run(tt.name, func(t *testing.T) {
+			req := NewRequest(t, http.MethodGet,
+				fmt.Sprintf("/api/v1/repos/%s/actions/tasks%s", repo.FullName(), tt.query),
+			)
+			req.AddTokenAuth(token)
+
+			res := MakeRequest(t, req, http.StatusOK)
+			apiTasks := new(api.ActionTaskResponse)
+			DecodeJSON(t, res, apiTasks)
+
+			assert.Equal(t, int64(12), apiTasks.TotalCount)
+			require.Len(t, apiTasks.Entries, 1)
+			assert.Equal(t, tt.expectedID, apiTasks.Entries[0].ID)
+		})
+	}
+}
+
 func TestActionsAPIGetActionRun(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
 
