@@ -78,10 +78,9 @@ backup gate and pin history.
 ## Release flow
 
 `.github/workflows/build-j4k-image.yml` tests the carried APIs, builds both rootless architectures, checks the stamped version,
-and publishes the manifest. Push the release tag separately from the branch,
-then pin both cluster image settings to the same OCI index digest. Keep the
-source and image on GitHub/GHCR so recovery remains possible while the Forge
-is down.
+and publishes the manifest. Push the release tag separately from the branch.
+Keep the source and image on GitHub/GHCR so recovery remains possible while the
+Forge is down.
 
 Forgejo's contribution policy prohibits AI-authored upstream contributions.
 These agent-authored carries must not be submitted as upstream pull requests.
