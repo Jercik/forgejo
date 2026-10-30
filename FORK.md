@@ -68,8 +68,10 @@ backup gate and pin history.
   `GetActionJobLogs` also maps `os.ErrNotExist`, and the run-logs ZIP writes a
   `.MISSING` entry for the job. The web log download
   (`.../actions/runs/{run}/jobs/{job}/attempt/{attempt}/logs`) maps it to 404 as
-  well. Drop the carry when upstream handles the same case; as of `v17.0.1` it
-  does not.
+  well. Each of these not-found answers carries the fixed text
+  `actions.LogNotFoundMessage` (`log file not found`), not the storage path.
+  Drop the carry when upstream handles the same case; as of `v17.0.1` it does
+  not.
 - Required status check patterns (`status_check_contexts`) are validated and
   the merge gate fails closed. `CompileStatusCheckPattern` in
   `models/git/status_check_pattern.go` rejects a pattern that gobwas/glob cannot
@@ -86,8 +88,9 @@ backup gate and pin history.
 
 ## Release flow
 
-`.github/workflows/build-j4k-image.yml` tests the carried APIs, builds both rootless architectures, checks the stamped version,
-and publishes the manifest. Push the release tag separately from the branch.
+`.github/workflows/build-j4k-image.yml` runs the integration and unit tests of
+the carries, builds both rootless architectures, checks the stamped version, and
+publishes the manifest. Push the release tag separately from the branch.
 Keep the source and image on GitHub/GHCR so recovery remains possible while the
 Forge is down.
 
