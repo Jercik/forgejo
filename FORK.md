@@ -30,10 +30,10 @@ backup gate and pin history.
   Actions job tokens are allowed and checked against the task's own repository
   permission. Drop this carry when the pinned upstream release ships an
   equivalent API; as of `v17.0.1`, upstream still has none.
-- Pending reviews remain scoped to the negative synthetic Actions reviewer ID
+- Pending reviews are scoped to the negative synthetic Actions reviewer ID
   (`FindReviewOptions.ReviewerID != 0` instead of `> 0`). The
   `actions-reviewer-isolation` version capability advertises this guarantee.
-  The change also affects `dismissPriors` in `services/pull/review.go`, which
+  The same filter applies in `dismissPriors` in `services/pull/review.go`, which
   passes the review's `ReviewerID` after loading the reviewer. For a deleted
   reviewer (ghost, `-1`) or an Actions-authored review (`-2`), upstream drops
   the filter and dismisses every undismissed review on the PR, whereas the fork
@@ -46,13 +46,18 @@ backup gate and pin history.
   `v17.0.0`; the capability's contract is that all three endpoints exist. The
   `rerun-failed-jobs` endpoint is fork-invented and has no upstream equivalent;
   drop the capability only when all three exist upstream.
-- Container-registry write races. A concurrent push of an identical manifest or
-  blob hit a unique violation (`UQE_package_version_s`,
-  `UQE_package_blob_sha256`) and answered 500, and a lost blob insert panicked
-  on a nil blob in `services/packages/container/blob.go`. The manifest and blob
-  writes now run in `db.RetryTx`, and cleanup deletes only content that the
-  attempt's own insert created, never the winner's file. Drop the carry when
-  upstream makes these writes idempotent; as of `v17.0.1` it does not.
+- Concurrent pushes of an identical container manifest or blob succeed.
+  `SaveAsPackageBlob` in `services/packages/container/blob.go` and
+  `processImageManifest` and `processImageManifestIndex` in
+  `services/packages/container/manifest.go` run their writes in `db.RetryTx`
+  with `retryOnConflict`, which makes up to three attempts on a
+  unique-constraint violation, a deadlock, or `ErrDuplicatePackageVersion`. The
+  loser of a race retries the whole transaction, so its lookup sees the winner's
+  committed rows. An attempt that fails deletes the blob's content file only if
+  it inserted the blob row, never the winner's file. `SaveAsPackageBlob` stops
+  retrying once it has written the content, because the upload stream is
+  consumed. Drop the carry when upstream makes these writes idempotent; as of
+  `v17.0.1` it does not.
 - Release creation tolerates the background tag sync. `insertRelease` in
   `services/release/release.go` adopts a tag-only row that the sync wrote
   between the existence check and the insert, instead of answering 500 on
@@ -88,8 +93,9 @@ backup gate and pin history.
 
 ## Release flow
 
-`.github/workflows/build-j4k-image.yml` runs the integration and unit tests of
-the carries, builds both rootless architectures, checks the stamped version, and
+`.github/workflows/build-j4k-image.yml` runs the tests that cover the carries
+(the tests they add or modify, and the upstream tests of the functions they
+modify), builds both rootless architectures, checks the stamped version, and
 publishes the manifest. Push the release tag separately from the branch.
 Keep the source and image on GitHub/GHCR so recovery remains possible while the
 Forge is down.
