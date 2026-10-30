@@ -15,26 +15,56 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Run fork integration tests
-        run: |
-          make 'test-sqlite#TestAPIPullReviewResolve'
-          make 'test-sqlite#TestAPIPullReviewActionsUserPendingIsolation'
-          make 'test-sqlite#TestVersion'
-          make 'test-sqlite#TestActionsAPIRerunFailedJobs'
-          make 'test-sqlite#TestAPIGetActionJobLogs'
-          make 'test-sqlite#TestAPIBranchProtectionRejectsUnusableStatusCheckPattern'
-          make 'test-sqlite#TestProtectedBranch_RejectsUnusableStatusCheckPattern'
-          make 'test#TestGetCurrentReviewActionsUser'
-          make 'test#TestSubmitReviewActionsUserIsolation'
-          make 'test#TestRerunFailedJobs'
-          make 'test#TestCollectFailedRerunJobs'
-          make 'test#TestSaveAsPackageBlob'
-          make 'test#TestProcessManifest'
-          make 'test#TestRelease_insertRelease_TagSyncRace'
-          make 'test#TestMergeRequiredContextsCommitStatus'
-          make 'test#StatusCheckPattern'
+      - name: Run fork tests
+        shell: bash
         env:
           TAGS: sqlite sqlite_unlock_notify
+        run: |
+          integration=(
+            TestAPIPullReviewResolve
+            TestAPIPullReviewActionsUserPendingIsolation
+            TestVersion
+            TestActionsAPIRerunFailedJobs
+            TestAPIGetActionJobLogs
+            TestAPIBranchProtectionRejectsUnusableStatusCheckPattern
+            TestProtectedBranch_RejectsUnusableStatusCheckPattern
+          )
+          unit=(
+            TestGetCurrentReviewActionsUser
+            TestSubmitReviewActionsUserIsolation
+            TestRerunFailedJobs
+            TestCollectFailedRerunJobs
+            TestSaveAsPackageBlob
+            TestProcessManifest
+            TestRelease_insertRelease_TagSyncRace
+            TestMergeRequiredContextsCommitStatus
+            StatusCheckPattern
+          )
+
+          alternation() { local IFS='|'; printf '%s' "$*"; }
+
+          # One make call per target, because each `test#` call relinks every
+          # package. Make pastes these variables into a shell command, so the
+          # quotes stop `|` from becoming a pipe. `-v` prints the test names
+          # that require_passed looks for.
+          make test-sqlite GOTESTCOMPILEDRUNSUFFIX="-test.v -test.run '$(alternation "${integration[@]}")'" 2>&1 | tee "$RUNNER_TEMP/integration.log"
+          make test-backend GOTESTFLAGS="-v -run '$(alternation "${unit[@]}")'" 2>&1 | tee "$RUNNER_TEMP/unit.log"
+
+          # `go test -run` exits 0 when a pattern matches no test.
+          failed=0
+          require_passed() {
+            local log=$1 name
+            shift
+            for name in "$@"; do
+              if ! grep -E -- "^--- PASS: [^ ]*${name}" "$log" >/dev/null; then
+                echo "::error::no test matching ${name} passed"
+                failed=1
+              fi
+            done
+          }
+          require_passed "$RUNNER_TEMP/integration.log" "${integration[@]}"
+          require_passed "$RUNNER_TEMP/unit.log" "${unit[@]}"
+          exit "$failed"
         timeout-minutes: 40
 
   build:
