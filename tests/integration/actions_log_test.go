@@ -17,6 +17,7 @@ import (
 	repo_model "forgejo.org/models/repo"
 	"forgejo.org/models/unittest"
 	user_model "forgejo.org/models/user"
+	"forgejo.org/modules/actions"
 	"forgejo.org/modules/setting"
 	"forgejo.org/modules/storage"
 	"forgejo.org/modules/test"
@@ -209,17 +210,32 @@ jobs:
 
 		// The placeholder task of a reusable-workflow outer job never gets a log
 		// file. The transfer cron job later sets log_in_storage on it all the same.
+		// A task whose named log file is gone answers the same, and neither answer
+		// may carry the path of that file.
 		actionTask := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionTask{ID: task.Id})
-		for _, inStorage := range []bool{false, true} {
-			t.Run(fmt.Sprintf("log_in_storage=%t", inStorage), func(t *testing.T) {
-				actionTask.LogFilename = ""
-				actionTask.LogInStorage = inStorage
+		for _, tc := range []struct {
+			name      string
+			filename  string
+			inStorage bool
+		}{
+			{"task without log file", "", false},
+			{"task without log file", "", true},
+			{"task with a missing log file", "missing/00/1.log.zst", false},
+			{"task with a missing log file", "missing/00/1.log.zst", true},
+		} {
+			t.Run(fmt.Sprintf("%s, log_in_storage=%t", tc.name, tc.inStorage), func(t *testing.T) {
+				actionTask.LogFilename = tc.filename
+				actionTask.LogInStorage = tc.inStorage
 				_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
 				require.NoError(t, err)
 
 				req := NewRequest(t, "GET", logURL)
 				req.AddTokenAuth(token)
-				MakeRequest(t, req, http.StatusNotFound)
+				resp := MakeRequest(t, req, http.StatusNotFound)
+				assert.Equal(t, actions.LogNotFoundMessage, strings.TrimSpace(resp.Body.String()))
+				if tc.filename != "" {
+					assert.NotContains(t, resp.Body.String(), tc.filename)
+				}
 			})
 		}
 

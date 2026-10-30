@@ -1955,8 +1955,13 @@ func GetActionJobLogs(ctx *context.APIContext) {
 	reader, filename, modtime, err := actions_service.OpenJobLogReader(ctx, ctx.Repo().Repository, jobID, attempt, stepFilter)
 	if err != nil {
 		switch {
+		case errors.Is(err, os.ErrNotExist):
+			// The error names the path of the missing log file.
+			if !errors.Is(err, actions.ErrNoLogFile) {
+				log.Error("OpenJobLogReader job %d: %v", jobID, err)
+			}
+			ctx.Error(http.StatusNotFound, "OpenJobLogReader", actions.LogNotFoundMessage)
 		case errors.Is(err, util.ErrNotExist),
-			errors.Is(err, os.ErrNotExist),
 			errors.Is(err, actions_service.ErrJobNotExecuted),
 			errors.Is(err, actions_service.ErrLogsExpired),
 			errors.Is(err, actions_service.ErrStepOutOfRange):

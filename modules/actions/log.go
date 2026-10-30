@@ -202,13 +202,22 @@ func RemoveLogs(ctx context.Context, inStorage bool, filename string) error {
 	return nil
 }
 
+// ErrNoLogFile is the error OpenLogs returns for a task without a log file. It
+// wraps os.ErrNotExist.
+var ErrNoLogFile = fmt.Errorf("task has no log file: %w", os.ErrNotExist)
+
+// LogNotFoundMessage is what a client is told when OpenLogs fails with
+// os.ErrNotExist. The error itself names the path of the missing log file, so
+// handlers log it and send this instead.
+const LogNotFoundMessage = "log file not found"
+
 // OpenLogs opens the log at filename. An empty filename means the task has no
 // log (the placeholder task of a reusable-workflow outer job), whatever
 // inStorage says: the transfer cron job marks such tasks as stored too, and
 // storage would open its root directory for the empty name.
 func OpenLogs(ctx context.Context, inStorage bool, filename string) (io.ReadSeekCloser, error) {
 	if filename == "" {
-		return nil, fmt.Errorf("task has no log file: %w", os.ErrNotExist)
+		return nil, ErrNoLogFile
 	}
 
 	if !inStorage {
