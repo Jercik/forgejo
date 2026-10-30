@@ -20,6 +20,9 @@ jobs:
         env:
           TAGS: sqlite sqlite_unlock_notify
         run: |
+          # Every test a carry adds or modifies, by its exact name, so that the
+          # job fails when any one of them stops passing. Upstream tests that no
+          # carry modifies stay out.
           integration=(
             TestAPIPullReviewResolve
             TestAPIPullReviewActionsUserPendingIsolation
@@ -35,12 +38,19 @@ jobs:
             TestSubmitReviewActionsUserIsolation
             TestRerunFailedJobs
             TestCollectFailedRerunJobs
-            TestSaveAsPackageBlob
-            TestProcessManifest
+            TestSaveAsPackageBlobLostInsertRace
+            TestSaveAsPackageBlobLostInsertRaceThenFailureKeepsWinnersContent
+            TestSaveAsPackageBlobFailureRemovesOwnContent
+            TestSaveAsPackageBlobDoesNotRetryAfterWritingContent
+            TestProcessManifestLostVersionRace
+            TestProcessManifestLostBlobRaceThenFailureKeepsWinnersContent
+            TestProcessManifestLostOverwriteRaceOnExistingTag
             TestRelease_insertRelease_TagSyncRace
-            TestMergeRequiredContextsCommitStatus
             TestMergeRequiredContextsCommitStatusBlocksOnUnusablePattern
-            StatusCheckPattern
+            TestCompileStatusCheckPattern
+            TestCompileStatusCheckPatternRejectsEveryPanickingPattern
+            TestStatusCheckPatternMatch
+            TestStatusCheckPatternMatchReturnsPanicAsError
           )
 
           alternation() { local IFS='|'; printf '%s' "$*"; }
@@ -52,14 +62,15 @@ jobs:
           make test-sqlite GOTESTCOMPILEDRUNSUFFIX="-test.v -test.run '$(alternation "${integration[@]}")'" 2>&1 | tee "$RUNNER_TEMP/integration.log"
           make test-backend GOTESTFLAGS="-v -run '$(alternation "${unit[@]}")'" 2>&1 | tee "$RUNNER_TEMP/unit.log"
 
-          # `go test -run` exits 0 when a pattern matches no test.
+          # `go test -run` exits 0 when a pattern matches no test, and it matches
+          # a name anywhere in a test name, so look for the whole name.
           failed=0
           require_passed() {
             local log=$1 name
             shift
             for name in "$@"; do
-              if ! grep -E -- "^--- PASS: [^ ]*${name}" "$log" >/dev/null; then
-                echo "::error::no test matching ${name} passed"
+              if ! grep -E -- "^--- PASS: ${name} \(" "$log" >/dev/null; then
+                echo "::error::no test named ${name} passed"
                 failed=1
               fi
             done
