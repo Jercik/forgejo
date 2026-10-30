@@ -202,7 +202,15 @@ func RemoveLogs(ctx context.Context, inStorage bool, filename string) error {
 	return nil
 }
 
+// OpenLogs opens the log at filename. An empty filename means the task has no
+// log (the placeholder task of a reusable-workflow outer job), whatever
+// inStorage says: the transfer cron job marks such tasks as stored too, and
+// storage would open its root directory for the empty name.
 func OpenLogs(ctx context.Context, inStorage bool, filename string) (io.ReadSeekCloser, error) {
+	if filename == "" {
+		return nil, fmt.Errorf("task has no log file: %w", os.ErrNotExist)
+	}
+
 	if !inStorage {
 		name := DBFSPrefix + filename
 		f, err := dbfs.Open(ctx, name)

@@ -4,6 +4,8 @@
 package integration
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -344,20 +346,43 @@ jobs:
 			assert.Equal(t, "step error: boom", l.Content)
 		})
 
-		// The placeholder task of a reusable-workflow outer job never gets a log file.
-		t.Run("task without log file: 404", func(t *testing.T) {
-			actionTask.LogFilename = ""
-			actionTask.LogInStorage = false
-			_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
-			require.NoError(t, err)
+		// The placeholder task of a reusable-workflow outer job never gets a log
+		// file. The transfer cron job later sets log_in_storage on it all the same.
+		for _, inStorage := range []bool{false, true} {
+			t.Run(fmt.Sprintf("task without log file, log_in_storage=%t", inStorage), func(t *testing.T) {
+				actionTask.LogFilename = ""
+				actionTask.LogInStorage = inStorage
+				_, err := db.GetEngine(t.Context()).ID(actionTask.ID).Cols("log_filename", "log_in_storage").Update(actionTask)
+				require.NoError(t, err)
 
-			req := NewRequestf(t, "GET",
-				"/api/v1/repos/%s/actions/jobs/%d/logs",
-				repoA.FullName(), jobID,
-			)
-			req.AddTokenAuth(token)
-			MakeRequest(t, req, http.StatusNotFound)
-		})
+				t.Run("job log: 404", func(t *testing.T) {
+					req := NewRequestf(t, "GET",
+						"/api/v1/repos/%s/actions/jobs/%d/logs",
+						repoA.FullName(), jobID,
+					)
+					req.AddTokenAuth(token)
+					MakeRequest(t, req, http.StatusNotFound)
+				})
+
+				t.Run("run logs zip: MISSING entry, no PARTIAL", func(t *testing.T) {
+					job := unittest.AssertExistsAndLoadBean(t, &actions_model.ActionRunJob{ID: jobID})
+					req := NewRequestf(t, "GET",
+						"/api/v1/repos/%s/actions/runs/%d/logs",
+						repoA.FullName(), job.RunID,
+					)
+					req.AddTokenAuth(token)
+					resp := MakeRequest(t, req, http.StatusOK)
+
+					r, err := zip.NewReader(bytes.NewReader(resp.Body.Bytes()), int64(resp.Body.Len()))
+					require.NoError(t, err)
+					var names []string
+					for _, f := range r.File {
+						names = append(names, f.Name)
+					}
+					require.Equal(t, []string{fmt.Sprintf("%s-%d-attempt-%d.MISSING", job.Name, job.ID, job.Attempt)}, names)
+				})
+			})
+		}
 
 		httpContextA := NewAPITestContext(t, user2.Name, repoA.Name, auth_model.AccessTokenScopeWriteUser)
 		doAPIDeleteRepository(httpContextA)(t)
