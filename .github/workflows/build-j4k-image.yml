@@ -44,7 +44,7 @@ jobs:
             TestSubmitReviewActionsUserIsolation
             TestRerunFailedJobs
             TestCollectFailedRerunJobs
-            Test_SaveAndGetManifestAndBlob # SaveAsPackageBlob, GetLocalBlob, processImageManifest
+            Test_SaveAndGetManifestAndBlob # SaveAsPackageBlob, processImageManifest
             TestSaveAsPackageBlobLostInsertRace
             TestSaveAsPackageBlobLostInsertRaceThenFailureKeepsWinnersContent
             TestSaveAsPackageBlobFailureRemovesOwnContent
