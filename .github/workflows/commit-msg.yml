@@ -1,0 +1,119 @@
+---
+name: commit-msg
+
+# Enforce commit-message policy before merge; see the validation step below.
+
+on:
+  pull_request:
+    # `edited` is required: a base-branch retarget fires only `edited`. It also
+    # fires on title and body edits, so a title change rechecks the squash subject.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  # Reading the current pull request needs more than contents: read.
+  pull-requests: read
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Fetches every branch, so validation finds the base without a fetch.
+          fetch-depth: 0
+          # The validation step executes the PR's helper; do not persist its token.
+          persist-credentials: false
+
+      - name: Read the current pull request
+        # Reruns can replay stale metadata, so read the current pull request;
+        # validation still uses this run's event head.
+        # Only this step needs the job token.
+        shell: bash
+        env:
+          # Pass attacker-controllable event fields via env, never inline in run: (script injection).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+          API_URL: ${{ github.api_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          case "$PR_NUMBER" in
+            ""|*[!0-9]*)
+              printf 'refusing pull request number %s\n' "$PR_NUMBER" >&2
+              exit 1
+              ;;
+          esac
+
+          api_root=${API_URL%/}
+          pr_json=$(
+            curl -fsS \
+              -H "Accept: application/json" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              "${api_root}/repos/${REPOSITORY}/pulls/${PR_NUMBER}"
+          )
+          pr_fields="${RUNNER_TEMP}/commit-msg-pr"
+          mkdir -p "$pr_fields"
+          printf '%s' "$pr_json" | FIELD_REF="$pr_fields/ref" FIELD_TITLE="$pr_fields/title" node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const fs=require("node:fs");const pr=JSON.parse(s);const ref=pr?.base?.ref;const title=pr?.title;if(typeof ref!=="string"||ref.length===0){process.stderr.write("pull request response has no base ref\n");process.exit(1)}if(typeof title!=="string"){process.stderr.write("pull request response has no title\n");process.exit(1)}fs.writeFileSync(process.env.FIELD_REF,ref);fs.writeFileSync(process.env.FIELD_TITLE,title)})'
+
+      - name: Validate commit title and subjects
+        # Validate the messages a merge places on the target branch; the
+        # repository's merge settings decide which merge methods apply.
+        shell: bash
+        env:
+          # Pass attacker-controllable event fields via env, never inline in run: (script injection).
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Forgejo's runner exports credentials to every step: the job token,
+          # the Actions runtime and OIDC request tokens, and a cache URL whose
+          # run key authenticates to the cache proxy. The PR's checker still
+          # executes here; keep these credentials out of its environment.
+          unset GITHUB_TOKEN FORGEJO_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_CACHE_URL
+
+          case "$HEAD_SHA" in
+            *[!0-9a-fA-F]*)
+              printf 'refusing head sha %s\n' "$HEAD_SHA" >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#HEAD_SHA}" -ne 40 ] && [ "${#HEAD_SHA}" -ne 64 ]; then
+            printf 'refusing head sha %s\n' "$HEAD_SHA" >&2
+            exit 1
+          fi
+
+          pr_fields="${RUNNER_TEMP}/commit-msg-pr"
+          base_ref=$(cat "$pr_fields/ref")
+
+          # Squash: the PR title becomes the target branch's subject.
+          check_title() {
+            local check_status
+            if { cat "$pr_fields/title"; printf '%s\n' "$1"; } | bash scripts/check-msg.sh --title; then
+              return 0
+            else
+              check_status=$?
+              printf 'commit-msg: %s\n' "$2" >&2
+              exit "$check_status"
+            fi
+          }
+
+          check_title "" 'PR title check failed'
+
+          # Forgejo allows branch names that start with "-", which --branch rejects.
+          git check-ref-format "refs/heads/${base_ref}"
+          from=$(git rev-parse "refs/remotes/origin/${base_ref}^{commit}")
+
+          # Rebase: the PR's individual commits land on the target branch.
+          git rev-list "$from..$HEAD_SHA" > "$pr_fields/commits"
+          failed=0
+          while IFS= read -r commit; do
+            git show -s --format=%B "$commit" > "$pr_fields/message"
+            if ! bash scripts/check-msg.sh < "$pr_fields/message"; then
+              printf 'commit-msg: commit check failed: %s\n' "$commit" >&2
+              failed=1
+            fi
+          done < "$pr_fields/commits"
+          exit "$failed"
