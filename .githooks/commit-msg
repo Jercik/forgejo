@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Native Git hook - enable with: git config core.hooksPath .githooks
+set -euo pipefail
+
+exec bash scripts/check-msg.sh < "$1"
