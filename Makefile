@@ -234,6 +234,7 @@ help:
 	@echo " - show-version-full                show the same version as the API endpoint"
 	@echo " - show-version-major               show major release number only"
 	@echo " - test-frontend                    test frontend files"
+	@echo " - test-frontend-affected           test frontend files affected since the last run"
 	@echo " - test-frontend-coverage           test frontend files and display code coverage"
 	@echo " - test-backend                     test backend files"
 	@echo " - test-remote-cacher               test backend files that use a remote cache"
@@ -581,6 +582,10 @@ test-remote-cacher:
 .PHONY: test-frontend
 test-frontend: node_modules
 	npx vitest
+
+.PHONY: test-frontend-affected
+test-frontend-affected: node_modules
+	npx vitest run --since-last-run
 
 .PHONY: test-frontend-coverage
 test-frontend-coverage: node_modules
