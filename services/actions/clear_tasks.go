@@ -71,6 +71,13 @@ func stopTasks(ctx context.Context, opts actions_model.FindTaskOptions) error {
 
 	CreateCommitStatus(ctx, jobs...)
 
+	// Emit only after each task's transaction has committed, so the emitter sees the job as done.
+	for _, job := range jobs {
+		if err := EmitJobsIfReady(job.RunID); err != nil {
+			log.Error("Emit ready jobs of run %d: %v", job.RunID, err)
+		}
+	}
+
 	return nil
 }
 
