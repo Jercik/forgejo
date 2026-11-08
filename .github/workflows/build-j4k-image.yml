@@ -41,6 +41,8 @@ jobs:
             TestActionsJobNeedsMatrix # ListActionTasks
             TestActionsAPIListActionRunsDefaultsToFirstPage
             TestActionsAPIListActionTasksDefaultsToFirstPage
+            TestActionsJobNeedsZombieTask
+            TestEphemeralRunnerDeletedByTaskZombieCleanup # stopTasks
           )
           unit=(
             TestActions # ListActionRuns, ListActionTasks

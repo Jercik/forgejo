@@ -106,6 +106,18 @@ backup gate and pin history.
   handlers change; other list endpoints keep their behavior. Drop the carry when
   the pinned upstream release ships forgejo PR #13960 or an equivalent fix; as of
   `v17.0.1` it does not.
+- A task stopped by the `stop_zombie_tasks` or `stop_endless_tasks` cron job
+  releases the jobs that need it. `stopTasks` in `services/actions/clear_tasks.go`
+  queues the job emitter for each stopped task's run after that task's
+  transaction commits, as the runner's `UpdateTask` does when it reports a
+  result. Upstream only fails the stopped job, so a job that needs it, including
+  a reusable workflow's outer job, stays blocked. Its run then never finishes and
+  holds its `concurrency` group until `cancel_abandoned_jobs` cancels the
+  blocked job, which with the default `ABANDONED_JOB_TIMEOUT` is more than a day
+  later. `stop_zombie_tasks` runs at startup, so after a Forge outage it fails
+  every task that lost its runner while the Forge was down. Drop the carry when
+  upstream emits after stopping these tasks; as of `v17.0.1` and `forgejo` main,
+  it does not.
 
 ## Release flow
 

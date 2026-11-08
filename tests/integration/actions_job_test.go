@@ -25,6 +25,7 @@ import (
 	"forgejo.org/modules/json"
 	"forgejo.org/modules/setting"
 	api "forgejo.org/modules/structs"
+	"forgejo.org/modules/test"
 	"forgejo.org/modules/webhook"
 	actions_service "forgejo.org/services/actions"
 	notify_service "forgejo.org/services/notify"
@@ -181,6 +182,55 @@ jobs:
 				}
 			})
 		}
+
+		httpContext := NewAPITestContext(t, user2.Name, apiRepo.Name, auth_model.AccessTokenScopeWriteUser)
+		doAPIDeleteRepository(httpContext)(t)
+	})
+}
+
+func TestActionsJobNeedsZombieTask(t *testing.T) {
+	if !setting.Database.Type.IsSQLite3() {
+		t.Skip()
+	}
+	onApplicationRun(t, func(t *testing.T, u *url.URL) {
+		user2 := unittest.AssertExistsAndLoadBean(t, &user_model.User{ID: 2})
+		session := loginUser(t, user2.Name)
+		token := getTokenForLoggedInUser(t, session, auth_model.AccessTokenScopeWriteRepository, auth_model.AccessTokenScopeWriteUser)
+
+		apiRepo := createActionsTestRepo(t, token, "actions-job-needs-zombie-task", false)
+		runner := newMockRunner()
+		runner.registerAsRepoRunner(t, user2.Name, apiRepo.Name, "mock-runner", []string{"ubuntu-latest"})
+
+		treePath := ".gitea/workflows/job-needs-zombie-task.yml"
+		fileContent := `name: job-needs-zombie-task
+on:
+  push:
+    paths:
+      - '.gitea/workflows/job-needs-zombie-task.yml'
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo job1
+  job2:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: [job1]
+    steps:
+      - run: echo job2
+`
+		opts := getWorkflowCreateFileOptions(user2, apiRepo.DefaultBranch, "create "+treePath, fileContent)
+		createWorkflowFile(t, token, user2.Name, apiRepo.Name, treePath, opts)
+
+		task := runner.fetchTask(t)
+		assert.Equal(t, "job1", getTaskJobNameByTaskID(t, token, user2.Name, apiRepo.Name, task.Id))
+
+		// A negative timeout makes the running job1 task a zombie without waiting for it to go stale.
+		defer test.MockVariableValue(&setting.Actions.ZombieTaskTimeout, -time.Minute)()
+		require.NoError(t, actions_service.StopZombieTasks(t.Context()))
+
+		task = runner.fetchTask(t)
+		assert.Equal(t, "job2", getTaskJobNameByTaskID(t, token, user2.Name, apiRepo.Name, task.Id))
 
 		httpContext := NewAPITestContext(t, user2.Name, apiRepo.Name, auth_model.AccessTokenScopeWriteUser)
 		doAPIDeleteRepository(httpContext)(t)
