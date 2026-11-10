@@ -1,7 +1,3 @@
----
-default-branch: force-pushed
----
-
 # The j4k Forgejo fork
 
 This fork runs `code.j4k.dev`. Its upstream base is Forgejo `v17.0.1`
@@ -18,9 +14,8 @@ onto the new upstream tag and force-pushing the branch with `--force-with-lease`
 never merge or squash-merge upstream history into it, because a squash turns the
 whole upstream delta into one fork commit and hides the real merge-base.
 Release tags `v<upstream>-j4k.N` are immutable and keep every shipped state
-reachable after a rebase. The `default-branch: force-pushed` front matter at the top of
-this file tells j4k-align not to require the `Protect main` ruleset on the default
-branch, since the ruleset would refuse the force-push; a new release branch carries it over.
+reachable after a rebase. The default branch has no `Protect main` ruleset, since the
+ruleset would refuse the force-push; a new release branch carries this file over.
 
 The upstream `v17.0.0` to `v17.0.1` delta adds no `models/forgejo_migrations`
 migrations, and the fork delta adds none. Whether a given bump needs the
