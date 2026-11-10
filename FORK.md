@@ -15,7 +15,9 @@ never merge or squash-merge upstream history into it, because a squash turns the
 whole upstream delta into one fork commit and hides the real merge-base.
 Release tags `v<upstream>-j4k.N` are immutable and keep every shipped state
 reachable after a rebase. The default branch has no `Protect main` ruleset, since the
-ruleset would refuse the force-push; a new release branch carries this file over.
+ruleset would refuse the force-push. A new release branch carries this file over: a tracked
+root `FORK.md` is what tells j4k-align that the repository is a fork, whose default branch
+needs no protection.
 
 The upstream `v17.0.0` to `v17.0.1` delta adds no `models/forgejo_migrations`
 migrations, and the fork delta adds none. Whether a given bump needs the
