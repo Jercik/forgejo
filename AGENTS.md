@@ -261,6 +261,7 @@ In repositories on code.j4k.dev, the infrastructure we run is the forge's action
 
 - Write a third-party action as `uses: owner/repo@ref`; a full URL bypasses the action mirror. Add a missing one to `forgejo_action_mirrors` in the j4k/cluster repository. Write an action hosted on code.j4k.dev with its full `https://code.j4k.dev/...` URL: the bare form resolves only through the mirror, which serves third-party actions alone.
 - Serve pinned binaries from the generic registry (j4k/cluster `scripts/mirror-files-to-forge.ts`) or a job image.
+- Pin each `FROM` by digest. `j4k-align --fix` writes Node bases; add any other base's digest to `forgejo_oci_mirror_docker_hub_images` in the j4k/cluster repository before pinning it. Change a pinned digest only in a dependency-update run someone starts by hand.
 
 Prove a routine run needs nothing external by running it once on a warm cache with the host or network blocked, for example `buildah build --layers --network none` or `UV_OFFLINE=1`. A log that names no host is not proof.
 
