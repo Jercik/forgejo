@@ -76,7 +76,7 @@ Implement what the current requirement needs, nothing more. Speculative surface 
 
 # Rule: Comments and Documentation Record Why and What Must Stay True
 
-Default to writing no comments. Add one only for what the code cannot show: why a decision was made, which alternatives were rejected, what external factor forced a workaround, or a commitment the code does not make obvious — the context that stops the next person from "cleaning up" something load-bearing. Never describe what the code does today; the code shows that.
+Default to writing no comments. Add one only for what the code cannot show: why a decision was made, which alternatives were rejected, what external factor forced a workaround, or a commitment the code does not make obvious. Such a comment is the context that stops the next person from "cleaning up" something load-bearing. A comment may also state a fact about a value that its declaration does not show: a unit, a value range, or the encoding or layout of untyped data. A reason says what would break or come out wrong if the code were written the obvious way; a benefit alone is not one. Never describe what the code does today; the code shows that. For code nothing outside the repository imports, never describe what a function returns, throws, rejects, or mutates, even when the sentence reads like a contract; put what a caller must not miss in a name or a type. Never restate in a comment a commitment an accepted ADR records; the ADR is its home.
 
 A commitment is behavior future changes must keep true unless someone deliberately changes the requirement. Its owner is the user or a maintainer the repository names for the code that implements it, such as in CODEOWNERS; reach a maintainer only through the user. It needs evidence that its owner decided it must stay true:
 
@@ -214,7 +214,7 @@ type User = z.infer<typeof User>;
 
 // Parse at the boundary — downstream code receives typed data
 function handleRequest(body: unknown): User {
-  return User.parse(body); // throws ZodError if invalid
+  return User.parse(body);
 }
 ```
 
